@@ -9,7 +9,7 @@ Branch: feat/backend-foundation
 - Task 3: complete (commits 05525c5..70e6020, review clean)
 - Task 4: complete (commits 2332300..e0887eb, review clean)
 - Task 5: complete (commits 03f1634..1b350d8, review clean)
-- Task 6: pending — SPA static serving + bootstrap
+- Task 6: complete (commits f552c57..2dc9842, review clean)
 - Task 7: pending — Docker packaging
 
 ## Minor findings (for final review triage)
@@ -20,3 +20,5 @@ Branch: feat/backend-foundation
 - Crate is lib (`src/lib.rs`, `pub mod` per module) + thin binary (`src/main.rs` uses `cue::`). Adopted in Task 1 to satisfy `cargo test --lib`; plan updated for Tasks 2-6.
 - T2 Minor: db test doesn't assert FK enforcement is live (optional hardening)
 - T5 Minor: catalogue test doesn't assert cast array / watched=false spot-check (inherited from plan test body)
+- T6 Minor: file-serve/index-fallback/traversal-reject paths covered by smoke test only, not unit tests
+- T6 Minor(sec): serve_spa uses substring '..' guard (sufficient given Actix path normalization; component-level check is defense-in-depth)
