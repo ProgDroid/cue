@@ -7,7 +7,7 @@ Branch: feat/backend-foundation
 - Task 1: complete (commits 92846cd..1c249fe, review clean)
 - Task 2: complete (commits 8bd33ae..e7ee1f8, review clean)
 - Task 3: complete (commits 05525c5..70e6020, review clean)
-- Task 4: pending — dev seed + seeder
+- Task 4: complete (commits 2332300..e0887eb, review clean)
 - Task 5: pending — catalogue assembly + GET /api/catalogue
 - Task 6: pending — SPA static serving + bootstrap
 - Task 7: pending — Docker packaging
