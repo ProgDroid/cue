@@ -1,0 +1,13 @@
+services:
+  cue:
+    build: .
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - cue-data:/data
+    env_file:
+      - .env
+    restart: unless-stopped
+
+volumes:
+  cue-data:
