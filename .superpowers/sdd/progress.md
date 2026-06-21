@@ -10,7 +10,7 @@ Branch: feat/backend-foundation
 - Task 4: complete (commits 2332300..e0887eb, review clean)
 - Task 5: complete (commits 03f1634..1b350d8, review clean)
 - Task 6: complete (commits f552c57..2dc9842, review clean)
-- Task 7: pending — Docker packaging
+- Task 7: complete (commits a43d87e..673b300, review clean)
 
 ## Minor findings (for final review triage)
 - T1 Minor: sqlite_path doesn't handle `sqlite:file:` URI variant (out of scope, future)
@@ -22,3 +22,5 @@ Branch: feat/backend-foundation
 - T5 Minor: catalogue test doesn't assert cast array / watched=false spot-check (inherited from plan test body)
 - T6 Minor: file-serve/index-fallback/traversal-reject paths covered by smoke test only, not unit tests
 - T6 Minor(sec): serve_spa uses substring '..' guard (sufficient given Actix path normalization; component-level check is defense-in-depth)
+- FOLLOW-UP: docker runtime verification deferred (daemon was down). Run before merge:
+  docker compose build && docker compose up -d && curl -s http://127.0.0.1:8080/api/catalogue | head -c 100 && docker compose down
