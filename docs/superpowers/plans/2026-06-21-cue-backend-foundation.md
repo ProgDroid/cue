@@ -29,8 +29,11 @@
 - Create: `.gitignore`
 - Create: `.env.example`
 - Create: `src/config.rs`
-- Create: `src/main.rs` (minimal, replaced in Task 6)
+- Create: `src/lib.rs` (library crate root; declares `pub mod config;`)
+- Create: `src/main.rs` (thin binary consuming the lib crate; replaced in Task 6)
 - Test: inline `#[cfg(test)]` module in `src/config.rs`
+
+The crate is a **library + binary**: modules live in `src/lib.rs` (so `cargo test --lib` works), and `src/main.rs` consumes them via the `cue::` crate path.
 
 **Interfaces:**
 - Produces: `Config` struct with public fields `bind_addr: String`, `database_url: String`, `static_dir: String`, and `Option<String>` fields `anthropic_api_key`, `openai_api_key`, `motn_api_key`, `plex_url`, `plex_token`, `region`, `sync_cron`.
@@ -200,13 +203,21 @@ impl Config {
 }
 ```
 
-- [ ] **Step 7: Create a minimal `src/main.rs` so the crate builds**
+- [ ] **Step 7: Create `src/lib.rs` and a thin `src/main.rs`**
+
+`src/lib.rs`:
 
 ```rust
-mod config;
+pub mod config;
+```
+
+`src/main.rs` (consumes the lib crate so it compiles and links):
+
+```rust
+use cue::config::Config;
 
 fn main() {
-    let cfg = config::Config::from_env();
+    let cfg = Config::from_env();
     println!("cue config loaded: bind={}", cfg.bind_addr);
 }
 ```
@@ -219,7 +230,7 @@ Run: `cargo clippy --all-targets -- -D warnings` → Expected: no warnings.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add Cargo.toml Cargo.lock .gitignore .env.example src/config.rs src/main.rs
+git add Cargo.toml Cargo.lock .gitignore .env.example src/config.rs src/lib.rs src/main.rs
 git commit -m "feat(backend): cargo scaffold and env-driven config"
 ```
 
