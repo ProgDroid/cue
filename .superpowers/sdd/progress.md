@@ -8,7 +8,7 @@ Branch: feat/backend-foundation
 - Task 2: complete (commits 8bd33ae..e7ee1f8, review clean)
 - Task 3: complete (commits 05525c5..70e6020, review clean)
 - Task 4: complete (commits 2332300..e0887eb, review clean)
-- Task 5: pending — catalogue assembly + GET /api/catalogue
+- Task 5: complete (commits 03f1634..1b350d8, review clean)
 - Task 6: pending — SPA static serving + bootstrap
 - Task 7: pending — Docker packaging
 
@@ -19,3 +19,4 @@ Branch: feat/backend-foundation
 ## Decisions
 - Crate is lib (`src/lib.rs`, `pub mod` per module) + thin binary (`src/main.rs` uses `cue::`). Adopted in Task 1 to satisfy `cargo test --lib`; plan updated for Tasks 2-6.
 - T2 Minor: db test doesn't assert FK enforcement is live (optional hardening)
+- T5 Minor: catalogue test doesn't assert cast array / watched=false spot-check (inherited from plan test body)
