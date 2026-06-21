@@ -1,3 +1,4 @@
+pub mod catalogue;
 pub mod seed;
 
 use std::str::FromStr;
