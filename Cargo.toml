@@ -20,5 +20,18 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tempfile = "3"
 
 [lints.clippy]
+all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
+missing_docs_in_private_items = "allow"
+separated_literal_suffix = "allow"
+implicit_return = "allow"
+print_stderr = "allow"
+exhaustive_enums = "allow"
+exhaustive_structs = "allow"
+single_char_lifetime_names = "allow"
+missing_inline_in_public_items = "allow"
+self_named_module_files = "allow"
+wildcard_enum_match_arm = "allow"
+pattern_type_mismatch = "allow"
+std_instead_of_core = "allow"
