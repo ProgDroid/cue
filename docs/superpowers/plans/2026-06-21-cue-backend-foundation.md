@@ -320,8 +320,11 @@ mod tests {
 
     #[tokio::test]
     async fn migrations_create_expected_tables() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let url = format!("sqlite:{}", tmp.path().display());
+        // tempdir (not NamedTempFile) so no handle is held open on the db file —
+        // required on Windows. Swap backslashes so the sqlite: URL parses.
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("test.db");
+        let url = format!("sqlite:{}", db.to_string_lossy().replace('\\', "/"));
         let pool = init_pool(&url).await.unwrap();
 
         let names: Vec<String> = sqlx::query_scalar(
@@ -599,17 +602,19 @@ mod tests {
     use super::*;
     use crate::db::init_pool;
 
-    async fn fresh_pool() -> sqlx::SqlitePool {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let url = format!("sqlite:{}", tmp.path().display());
-        // Keep the temp file alive for the test by leaking it.
-        std::mem::forget(tmp);
-        init_pool(&url).await.unwrap()
+    // Returns the pool plus the TempDir guard — keep the guard bound (`_dir`)
+    // for the test's lifetime so the directory isn't cleaned up early.
+    async fn fresh_pool() -> (sqlx::SqlitePool, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("test.db");
+        let url = format!("sqlite:{}", db.to_string_lossy().replace('\\', "/"));
+        let pool = init_pool(&url).await.unwrap();
+        (pool, dir)
     }
 
     #[tokio::test]
     async fn seeds_all_titles_once() {
-        let pool = fresh_pool().await;
+        let (pool, _dir) = fresh_pool().await;
 
         let inserted = seed_if_empty(&pool).await.unwrap();
         assert_eq!(inserted, 28);
@@ -880,18 +885,18 @@ mod tests {
     use crate::db::{init_pool, seed::seed_if_empty};
     use crate::routes;
 
-    async fn seeded_pool() -> SqlitePool {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let url = format!("sqlite:{}", tmp.path().display());
-        std::mem::forget(tmp);
+    async fn seeded_pool() -> (SqlitePool, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("test.db");
+        let url = format!("sqlite:{}", db.to_string_lossy().replace('\\', "/"));
         let pool = init_pool(&url).await.unwrap();
         seed_if_empty(&pool).await.unwrap();
-        pool
+        (pool, dir)
     }
 
     #[actix_web::test]
     async fn catalogue_endpoint_returns_seed() {
-        let pool = seeded_pool().await;
+        let (pool, _dir) = seeded_pool().await;
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(pool))
@@ -965,7 +970,9 @@ git commit -m "feat(backend): catalogue assembly and GET /api/catalogue"
 
 **Interfaces:**
 - Consumes: `config::Config`, `db::{init_pool, seed::seed_if_empty}`, `routes::configure`.
-- Produces: `static_files::StaticDir(pub String)` (app-data newtype) and `static_files::spa_fallback(req, dir) -> HttpResponse` serving `index.html` when present, else an inline placeholder.
+- Produces: `static_files::StaticDir(pub String)` (app-data newtype) and `static_files::serve_spa(req, dir) -> HttpResponse` — a single catch-all that serves the requested file from `static_dir` when it exists, otherwise `index.html` (SPA fallback), otherwise an inline placeholder. Rejects `..` traversal.
+
+**Why one catch-all instead of `actix_files::Files`:** `Files` returns 404 for missing paths rather than falling through, which would break client-side routes (e.g. `/detail/5`). The catch-all serves real assets *and* falls back to `index.html` for unknown routes.
 
 - [ ] **Step 1: Create `src/static_files.rs` with the failing test**
 
@@ -976,16 +983,28 @@ use actix_web::{web, HttpRequest, HttpResponse, Responder};
 #[derive(Clone)]
 pub struct StaticDir(pub String);
 
-/// Serve the SPA entrypoint for any unmatched route (client-side routing).
-/// Falls back to an inline page when the frontend has not been built yet.
-pub async fn spa_fallback(req: HttpRequest, dir: web::Data<StaticDir>) -> impl Responder {
-    let index = std::path::Path::new(&dir.0).join("index.html");
-    match NamedFile::open_async(&index).await {
+const PLACEHOLDER: &str = "<!doctype html><meta charset=utf-8><title>cue</title>\
+    <h1>cue backend running</h1><p>Frontend not built yet.</p>";
+
+/// Catch-all static handler: serve the requested file when it exists under the
+/// static dir; otherwise fall back to `index.html` (SPA client routing);
+/// otherwise an inline placeholder (frontend not built yet).
+pub async fn serve_spa(req: HttpRequest, dir: web::Data<StaticDir>) -> impl Responder {
+    let base = std::path::Path::new(&dir.0);
+    let rel = req.path().trim_start_matches('/');
+
+    // Reject path traversal before touching the filesystem.
+    if !rel.is_empty() && !rel.contains("..") {
+        if let Ok(file) = NamedFile::open_async(base.join(rel)).await {
+            return file.into_response(&req);
+        }
+    }
+
+    match NamedFile::open_async(base.join("index.html")).await {
         Ok(file) => file.into_response(&req),
         Err(_) => HttpResponse::Ok()
             .content_type("text/html; charset=utf-8")
-            .body("<!doctype html><meta charset=utf-8><title>cue</title>\
-                   <h1>cue backend running</h1><p>Frontend not built yet.</p>"),
+            .body(PLACEHOLDER),
     }
 }
 
@@ -993,14 +1012,14 @@ pub async fn spa_fallback(req: HttpRequest, dir: web::Data<StaticDir>) -> impl R
 mod tests {
     use actix_web::{test, web, App};
 
-    use super::{spa_fallback, StaticDir};
+    use super::{serve_spa, StaticDir};
 
     #[actix_web::test]
     async fn fallback_serves_placeholder_when_no_build() {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(StaticDir("does/not/exist".to_string())))
-                .default_service(web::route().to(spa_fallback)),
+                .default_service(web::route().to(serve_spa)),
         )
         .await;
 
@@ -1027,11 +1046,10 @@ mod models;
 mod routes;
 mod static_files;
 
-use actix_files::Files;
 use actix_web::{web, App, HttpServer};
 
 use crate::config::Config;
-use crate::static_files::{spa_fallback, StaticDir};
+use crate::static_files::{serve_spa, StaticDir};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -1067,8 +1085,9 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(StaticDir(static_dir.clone())))
             .configure(routes::configure)
-            .service(Files::new("/", static_dir.clone()).index_file("index.html"))
-            .default_service(web::route().to(spa_fallback))
+            // The `/api` scope is matched first; everything else (real assets
+            // and client routes) falls to the catch-all SPA handler.
+            .default_service(web::route().to(serve_spa))
     })
     .bind(bind_addr)?
     .run()
