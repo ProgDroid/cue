@@ -24,3 +24,8 @@ Branch: feat/backend-foundation
 - T6 Minor(sec): serve_spa uses substring '..' guard (sufficient given Actix path normalization; component-level check is defense-in-depth)
 - FOLLOW-UP: docker runtime verification deferred (daemon was down). Run before merge:
   docker compose build && docker compose up -d && curl -s http://127.0.0.1:8080/api/catalogue | head -c 100 && docker compose down
+
+## Final whole-branch review
+- Verdict: READY TO MERGE (Opus). 0 Critical, 0 Important. All Minor findings triaged DEFER.
+- Build/test/clippy: cargo test 10/10, clippy -D warnings clean.
+- Recommended early follow-ups: FK-enforcement test, serve_spa unit tests, Docker runtime smoke.
