@@ -1,3 +1,5 @@
+pub mod seed;
+
 use std::str::FromStr;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
