@@ -368,13 +368,13 @@ pub async fn init_pool(database_url: &str) -> anyhow::Result<SqlitePool> {
 }
 ```
 
-- [ ] **Step 5: Add `mod db;` to `src/main.rs`**
+- [ ] **Step 5: Add `pub mod db;` to `src/lib.rs`**
 
-Modify `src/main.rs` so the module is part of the crate (place under `mod config;`):
+The crate is a library (`src/lib.rs`) plus a thin binary (`src/main.rs`); modules are declared in `src/lib.rs`. Add:
 
 ```rust
-mod config;
-mod db;
+pub mod config;
+pub mod db;
 ```
 
 - [ ] **Step 6: Run the test and clippy**
@@ -385,7 +385,7 @@ Run: `cargo clippy --all-targets -- -D warnings` → Expected: no warnings.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add migrations/0001_init.sql src/db/mod.rs src/main.rs
+git add migrations/0001_init.sql src/db/mod.rs src/lib.rs
 git commit -m "feat(backend): sqlite schema migration and pool init"
 ```
 
@@ -525,12 +525,12 @@ pub struct TitleDto {
 }
 ```
 
-- [ ] **Step 4: Add `mod models;` to `src/main.rs`**
+- [ ] **Step 4: Add `pub mod models;` to `src/lib.rs`**
 
 ```rust
-mod config;
-mod db;
-mod models;
+pub mod config;
+pub mod db;
+pub mod models;
 ```
 
 - [ ] **Step 5: Run the test and clippy**
@@ -541,7 +541,7 @@ Run: `cargo clippy --all-targets -- -D warnings` → Expected: no warnings.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/models.rs src/main.rs
+git add src/models.rs src/lib.rs
 git commit -m "feat(backend): domain enums, TitleRow, and TitleDto"
 ```
 
@@ -938,13 +938,13 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
 }
 ```
 
-- [ ] **Step 5: Add `mod routes;` to `src/main.rs`**
+- [ ] **Step 5: Add `pub mod routes;` to `src/lib.rs`**
 
 ```rust
-mod config;
-mod db;
-mod models;
-mod routes;
+pub mod config;
+pub mod db;
+pub mod models;
+pub mod routes;
 ```
 
 - [ ] **Step 6: Run the test to verify it fails, then passes**
@@ -955,7 +955,7 @@ Run: `cargo clippy --all-targets -- -D warnings` → Expected: no warnings.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/db/catalogue.rs src/db/mod.rs src/routes/mod.rs src/routes/catalogue.rs src/main.rs
+git add src/db/catalogue.rs src/db/mod.rs src/routes/mod.rs src/routes/catalogue.rs src/lib.rs
 git commit -m "feat(backend): catalogue assembly and GET /api/catalogue"
 ```
 
@@ -1032,24 +1032,30 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **Step 2: Register the module in `src/lib.rs` and run the test**
+
+Add `pub mod static_files;` to `src/lib.rs`:
+
+```rust
+pub mod config;
+pub mod db;
+pub mod models;
+pub mod routes;
+pub mod static_files;
+```
 
 Run: `cargo test --lib static_files`
-Expected: FAIL to compile — module not wired into `main.rs`.
+Expected: PASS (the `serve_spa` placeholder test is self-contained).
 
 - [ ] **Step 3: Write the full `src/main.rs` bootstrap**
 
-```rust
-mod config;
-mod db;
-mod models;
-mod routes;
-mod static_files;
+The binary consumes the library crate (`cue::…`); it declares no modules of its own.
 
+```rust
 use actix_web::{web, App, HttpServer};
 
-use crate::config::Config;
-use crate::static_files::{serve_spa, StaticDir};
+use cue::config::Config;
+use cue::static_files::{serve_spa, StaticDir};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -1068,10 +1074,10 @@ async fn main() -> std::io::Result<()> {
         }
     }
 
-    let pool = db::init_pool(&cfg.database_url)
+    let pool = cue::db::init_pool(&cfg.database_url)
         .await
         .map_err(std::io::Error::other)?;
-    let inserted = db::seed::seed_if_empty(&pool)
+    let inserted = cue::db::seed::seed_if_empty(&pool)
         .await
         .map_err(std::io::Error::other)?;
     tracing::info!("seeded {inserted} titles");
@@ -1084,7 +1090,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(StaticDir(static_dir.clone())))
-            .configure(routes::configure)
+            .configure(cue::routes::configure)
             // The `/api` scope is matched first; everything else (real assets
             // and client routes) falls to the catch-all SPA handler.
             .default_service(web::route().to(serve_spa))
