@@ -321,10 +321,20 @@ mod orchestrator_tests {
     async fn runner_guard_rejects_concurrent_start() {
         let (p, _dir) = pool().await;
         let runner = SyncRunner::new(p, vec![], None);
-        assert!(runner.try_start());
-        // Second immediate start is rejected while the first is in flight.
-        let second = runner.try_start();
-        // Either rejected (still running) or the first finished instantly; assert the API shape works.
-        assert!(second || !runner.is_running());
+        // First start is accepted and marks the runner busy.
+        assert!(runner.try_start(), "first start accepted");
+        // A second start while the first run is in flight is rejected.
+        assert!(
+            !runner.try_start(),
+            "second start rejected while a run is in flight"
+        );
+        // The guard clears once the spawned run completes.
+        for _ in 0..1000 {
+            if !runner.is_running() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(!runner.is_running(), "guard resets after the run completes");
     }
 }
