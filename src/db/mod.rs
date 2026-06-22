@@ -55,4 +55,32 @@ mod tests {
             );
         }
     }
+
+    #[tokio::test]
+    async fn foreign_keys_are_enforced() {
+        // SQLite only honours REFERENCES clauses when `PRAGMA foreign_keys` is
+        // ON, and that pragma is per-connection. `init_pool` sets it on every
+        // pooled connection; assert both the pragma value and the actual
+        // behaviour (an orphaned child insert must be rejected).
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("test.db");
+        let url = format!("sqlite:{}", db.to_string_lossy().replace('\\', "/"));
+        let pool = init_pool(&url).await.unwrap();
+
+        let fk_on: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(fk_on, 1, "foreign_keys pragma should be enabled");
+
+        // title_genres.title_id REFERENCES titles(id); id 999999 has no parent.
+        let orphan =
+            sqlx::query("INSERT INTO title_genres (title_id, genre) VALUES (999999, 'Comedy')")
+                .execute(&pool)
+                .await;
+        assert!(
+            orphan.is_err(),
+            "inserting a title_genres row with no parent title should violate the FK"
+        );
+    }
 }

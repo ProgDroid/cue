@@ -59,4 +59,86 @@ mod tests {
         let body = test::read_body(resp).await;
         assert!(String::from_utf8_lossy(&body).contains("cue backend running"));
     }
+
+    #[actix_web::test]
+    async fn serves_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("app.js"), b"console.log('cue');").unwrap();
+
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(StaticDir(
+                    dir.path().to_string_lossy().into_owned(),
+                )))
+                .default_service(web::route().to(serve_spa)),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/app.js").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+        let body = test::read_body(resp).await;
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains("console.log('cue');"));
+        assert!(!text.contains("Frontend not built yet"));
+    }
+
+    #[actix_web::test]
+    async fn falls_back_to_index_for_client_route() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("index.html"),
+            b"<!doctype html><title>cue app shell</title>",
+        )
+        .unwrap();
+
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(StaticDir(
+                    dir.path().to_string_lossy().into_owned(),
+                )))
+                .default_service(web::route().to(serve_spa)),
+        )
+        .await;
+
+        // A client-side route with no matching file serves index.html (SPA
+        // routing), not the inline placeholder.
+        let req = test::TestRequest::get()
+            .uri("/library/detail/7")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+        let body = test::read_body(resp).await;
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains("cue app shell"));
+        assert!(!text.contains("Frontend not built yet"));
+    }
+
+    #[actix_web::test]
+    async fn rejects_path_traversal() {
+        // The static dir is a subdir; the secret sits one level up, outside it.
+        let root = tempfile::tempdir().unwrap();
+        let static_dir = root.path().join("static");
+        std::fs::create_dir(&static_dir).unwrap();
+        std::fs::write(static_dir.join("index.html"), b"app shell").unwrap();
+        std::fs::write(root.path().join("secret.txt"), b"TOP SECRET").unwrap();
+
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(StaticDir(
+                    static_dir.to_string_lossy().into_owned(),
+                )))
+                .default_service(web::route().to(serve_spa)),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/../secret.txt").to_request();
+        let resp = test::call_service(&app, req).await;
+        let body = test::read_body(resp).await;
+        let text = String::from_utf8_lossy(&body);
+        assert!(
+            !text.contains("TOP SECRET"),
+            "path traversal must not escape the static dir"
+        );
+    }
 }
