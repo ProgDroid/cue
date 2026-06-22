@@ -1,0 +1,59 @@
+name: docker-smoke
+
+# Build the production image, boot the container, and verify the API answers.
+# This replaces the local Docker smoke test for dev machines that can't run
+# Docker. The image bakes in ENV defaults (BIND_ADDR, DATABASE_URL, STATIC_DIR),
+# so no .env is needed — the runtime is self-contained.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t cue:smoke .
+
+      - name: Run container
+        run: docker run -d --name cue -p 8080:8080 cue:smoke
+
+      - name: Wait for readiness
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/api/health >/dev/null 2>&1; then
+              echo "container ready after ${i} attempt(s)"
+              exit 0
+            fi
+            echo "waiting for /api/health (attempt ${i})…"
+            sleep 2
+          done
+          echo "::error::container never became ready"
+          exit 1
+
+      - name: Smoke-test /api/catalogue
+        run: |
+          code=$(curl -s -o /tmp/catalogue.json -w '%{http_code}' http://127.0.0.1:8080/api/catalogue)
+          echo "HTTP ${code}"
+          head -c 300 /tmp/catalogue.json; echo
+          if [ "${code}" != "200" ]; then
+            echo "::error::expected HTTP 200, got ${code}"
+            exit 1
+          fi
+          # Seeded catalogue must come back as a non-empty JSON array.
+          jq -e 'type == "array" and length > 0' /tmp/catalogue.json >/dev/null \
+            || { echo "::error::catalogue was not a non-empty JSON array"; exit 1; }
+          echo "catalogue returned $(jq 'length' /tmp/catalogue.json) titles"
+
+      - name: Container logs
+        if: always()
+        run: docker logs cue || true
+
+      - name: Tear down
+        if: always()
+        run: docker rm -f cue || true
