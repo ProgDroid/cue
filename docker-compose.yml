@@ -1,10 +1,30 @@
 services:
   cue:
+    # Local dev builds the image here. On a server, pull the published image
+    # instead — comment out `build:` and use:
+    #   image: ghcr.io/progdroid/cue:latest
     build: .
+    # Container infra is PINNED here so a dev-flavoured .env (relative paths,
+    # 127.0.0.1 bind) can't break the container — `environment:` overrides
+    # `env_file:` in compose. BIND_ADDR MUST be 0.0.0.0: Docker publishes ports
+    # to the container's bridge interface, not its loopback, so a 127.0.0.1
+    # bind is unreachable through the port mapping.
+    environment:
+      BIND_ADDR: 0.0.0.0:8080
+      DATABASE_URL: sqlite:/data/cue.db
+      STATIC_DIR: /app/frontend/dist
+      RUST_LOG: info,sqlx=warn
+    # Host side: publishing on 127.0.0.1 keeps the app reachable only from the
+    # server itself (preserves the single-user/localhost posture, D7) — use this
+    # behind a reverse proxy on the same host. To reach it directly from another
+    # machine, change to "8080:8080".
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
       - cue-data:/data
+    # Secrets + runtime config only (API keys, Plex, MOTN, REGION, SYNC_CRON).
+    # The infra vars in .env (BIND_ADDR/DATABASE_URL/STATIC_DIR) are IGNORED in
+    # the container — `environment:` above wins. See .env.example.
     env_file:
       - .env
     restart: unless-stopped

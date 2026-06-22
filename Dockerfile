@@ -30,5 +30,8 @@ COPY --from=frontend /app/frontend/dist ./frontend/dist
 ENV BIND_ADDR=0.0.0.0:8080
 ENV DATABASE_URL=sqlite:/data/cue.db
 ENV STATIC_DIR=/app/frontend/dist
+# Log at info by default (the binary uses EnvFilter::from_default_env(), which
+# is silent with RUST_LOG unset). sqlx=warn suppresses per-query statement logs.
+ENV RUST_LOG=info,sqlx=warn
 EXPOSE 8080
 CMD ["cue"]
