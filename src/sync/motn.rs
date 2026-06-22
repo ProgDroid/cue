@@ -1,6 +1,6 @@
 //! Movie-of-the-Night (Streaming Availability) client for UK Disney+/Crunchyroll.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -20,21 +20,36 @@ const WANTED: [(Service, &str); 2] = [
 /// services that the given country actually lists. Absent services are skipped.
 #[must_use]
 pub fn resolve_services(countries_json: &str, country: &str) -> Vec<(Service, String)> {
-    let parsed: HashMap<String, CountryEntry> =
-        serde_json::from_str(countries_json).unwrap_or_default();
+    let parsed: HashMap<String, CountryEntry> = match serde_json::from_str(countries_json) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("MOTN /countries response did not parse: {e}");
+            return Vec::new();
+        }
+    };
     let Some(entry) = parsed.get(country) else {
         return Vec::new();
     };
+    let available: HashSet<&str> = entry.services.iter().map(|s| s.id.as_str()).collect();
     WANTED
         .iter()
-        .filter_map(|(svc, id)| entry.services.get(*id).map(|_| (*svc, (*id).to_string())))
+        .filter(|(_, id)| available.contains(id))
+        .map(|(svc, id)| (*svc, (*id).to_string()))
         .collect()
 }
 
 #[derive(Deserialize, Default)]
 struct CountryEntry {
+    // `/v4/countries` returns `services` as an ARRAY of service objects (each
+    // with an `id`), NOT a map keyed by id. Deserializing it as a map silently
+    // fails the whole parse and resolves to no services.
     #[serde(default)]
-    services: HashMap<String, serde_json::Value>,
+    services: Vec<ServiceEntry>,
+}
+
+#[derive(Deserialize)]
+struct ServiceEntry {
+    id: String,
 }
 
 #[derive(Deserialize)]
