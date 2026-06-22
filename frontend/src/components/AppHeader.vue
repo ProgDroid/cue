@@ -24,7 +24,7 @@
     </div>
 
     <!-- Avatar -->
-    <div class="avatar" aria-label="User: JD">JD</div>
+    <div class="avatar" aria-label="User: FF">FF</div>
   </header>
 </template>
 
