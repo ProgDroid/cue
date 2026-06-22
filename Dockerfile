@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1
 
 # --- Stage (enabled in the frontend plan): build the Vue SPA ---
-# FROM node:22-alpine AS frontend
-# WORKDIR /app/frontend
-# COPY frontend/package*.json ./
-# RUN npm ci
-# COPY frontend/ ./
-# RUN npm run build            # outputs /app/frontend/dist
+FROM node:22-alpine AS frontend
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build            # outputs /app/frontend/dist
 
 # --- Build the Rust backend ---
 FROM rust:1-bookworm AS backend
@@ -24,7 +24,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=backend /app/target/release/cue /usr/local/bin/cue
-# COPY --from=frontend /app/frontend/dist ./frontend/dist   # enabled in the frontend plan
+COPY --from=frontend /app/frontend/dist ./frontend/dist
 ENV BIND_ADDR=0.0.0.0:8080
 ENV DATABASE_URL=sqlite:/data/cue.db
 ENV STATIC_DIR=/app/frontend/dist
