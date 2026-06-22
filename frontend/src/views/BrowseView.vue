@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useCatalogueStore } from '@/stores/catalogue'
 import AskBar from '@/components/AskBar.vue'
 import ThreadBreadcrumb from '@/components/ThreadBreadcrumb.vue'
 import FilterBar from '@/components/FilterBar.vue'
 import PosterGrid from '@/components/PosterGrid.vue'
+import AnswerContext from '@/components/AnswerContext.vue'
+import ShimmerGrid from '@/components/ShimmerGrid.vue'
 import type { Title } from '@/types'
 
 const store = useCatalogueStore()
@@ -23,6 +25,12 @@ function openDetail(id: number) {
 function onFindSimilar(_t: Title) {
   // no-op until Task 15
 }
+
+const emptyCopy = computed(() =>
+  store.answerActive
+    ? 'Nothing in this result set matches those filters — loosen a filter or clear the thread.'
+    : 'Nothing in your library matches those filters.',
+)
 </script>
 
 <template>
@@ -34,16 +42,21 @@ function onFindSimilar(_t: Title) {
 
     <FilterBar />
 
-    <PosterGrid
-      v-if="store.visibleTitles.length > 0"
-      :titles="store.visibleTitles"
-      @select="openDetail"
-      @find-similar="onFindSimilar"
-    />
+    <ShimmerGrid v-if="store.resolving" />
+    <template v-else>
+      <AnswerContext v-if="store.answerActive" />
 
-    <div v-else class="empty-state">
-      Nothing in your library matches those filters.
-    </div>
+      <PosterGrid
+        v-if="store.visibleTitles.length > 0"
+        :titles="store.visibleTitles"
+        @select="openDetail"
+        @find-similar="onFindSimilar"
+      />
+
+      <div v-else class="empty-state">
+        {{ emptyCopy }}
+      </div>
+    </template>
   </div>
 </template>
 
