@@ -57,7 +57,58 @@ async fn main() -> std::io::Result<()> {
         None
     };
 
-    let engine = Arc::new(AskEngine::new(pool.clone(), embedder, model, light_axis));
+    // Clone before move into AskEngine so the runner can also hold a reference.
+    let embedder_for_engine = embedder.clone();
+    let engine = Arc::new(AskEngine::new(
+        pool.clone(),
+        embedder_for_engine,
+        model,
+        light_axis,
+    ));
+
+    // Assemble catalogue sources from configured credentials.
+    let mut sources: Vec<Arc<dyn cue::sync::CatalogueSource>> = Vec::new();
+    if let (Some(url), Some(token)) = (cfg.plex_url.clone(), cfg.plex_token.clone()) {
+        sources.push(Arc::new(cue::sync::plex::PlexClient::new(url, token)));
+    }
+    if let Some(key) = cfg.motn_api_key.clone() {
+        let country = cfg.region.clone().unwrap_or_else(|| "gb".to_string());
+        sources.push(Arc::new(cue::sync::motn::MotnClient::new(key, country)));
+    }
+    let runner = cue::sync::SyncRunner::new(pool.clone(), sources, embedder);
+
+    // Sync once on startup if the catalogue is empty or still just the seed.
+    let title_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM titles")
+        .fetch_one(&pool)
+        .await
+        .map_err(std::io::Error::other)?;
+    if title_count <= 28 && runner.try_start() {
+        tracing::info!("startup sync triggered (catalogue had {title_count} titles)");
+    }
+
+    // Daily (configurable) scheduled sync.
+    let cron = cfg
+        .sync_cron
+        .clone()
+        .unwrap_or_else(|| "0 0 3 * * *".to_string());
+    let scheduler = tokio_cron_scheduler::JobScheduler::new()
+        .await
+        .map_err(std::io::Error::other)?;
+    let runner_for_job = runner.clone();
+    #[allow(clippy::redundant_pub_crate)] // macro-generated future in closure
+    let job = tokio_cron_scheduler::Job::new_async(cron.as_str(), move |_uuid, _l| {
+        let r = runner_for_job.clone();
+        Box::pin(async move {
+            if r.try_start() {
+                tracing::info!("scheduled sync triggered");
+            } else {
+                tracing::warn!("scheduled sync skipped — a run is already active");
+            }
+        })
+    })
+    .map_err(std::io::Error::other)?;
+    scheduler.add(job).await.map_err(std::io::Error::other)?;
+    scheduler.start().await.map_err(std::io::Error::other)?;
 
     let static_dir = cfg.static_dir.clone();
     let bind_addr = cfg.bind_addr.clone();
@@ -67,6 +118,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(engine.clone()))
+            .app_data(web::Data::new(runner.clone()))
             .app_data(web::Data::new(StaticDir(static_dir.clone())))
             .configure(cue::routes::configure)
             // The `/api` scope is matched first; everything else (real assets
