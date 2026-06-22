@@ -1,0 +1,110 @@
+/* ============================================================
+   cue — design tokens (CSS custom properties)
+   Dark, content-forward media-discovery UI.
+   Drop into your Vue app's global stylesheet (:root) and
+   reference with var(--token). Values are the exact literals
+   used in the HTML prototype.
+   ============================================================ */
+
+:root {
+  /* ---- Surfaces (cool near-black neutrals) ---- */
+  --bg-app:            #0b0c0f;  /* app canvas, deepest */
+  --bg-panel:          #0e0f13;  /* chat rail / floating card */
+  --surface-1:         #15171c;  /* inputs, chips, card meta wells */
+  --surface-2:         #181b21;  /* raised / gradient top stop */
+  --surface-3:         #1d2129;  /* raised chips, refine chips */
+
+  /* ---- Borders (white alpha) ---- */
+  --border-subtle:     rgba(255,255,255,0.07);
+  --border:            rgba(255,255,255,0.08);
+  --border-strong:     rgba(255,255,255,0.12);
+
+  /* ---- Text ---- */
+  --text-strong:       #f4f5f7;  /* headings, wordmark */
+  --text-primary:      #e9ebf0;  /* body, input text */
+  --text-secondary:    #c2c7d0;
+  --text-tertiary:     #aab0bb;
+  --text-muted:        #8a909b;
+  --text-faint:        #5f6570;  /* mono captions */
+  --text-faintest:     #4f555f;  /* uppercase mono labels */
+
+  /* ---- Accent (single amber) ---- */
+  --accent:            #f5c518;  /* stars, active state, primary buttons */
+  --accent-text:       #f5d24e;  /* amber text on dark (ratings) */
+  --accent-on:         #1a1400;  /* text/icon ON the amber fill */
+  --accent-tint:       rgba(245,197,24,0.12); /* soft fill */
+  --accent-tint-2:     rgba(245,197,24,0.14);
+  --accent-line:       rgba(245,197,24,0.20); /* soft border */
+  --accent-line-2:     rgba(245,197,24,0.40);
+  --accent-focus:      rgba(245,197,24,0.50); /* input focus ring */
+
+  /* ---- Service identity dots ---- */
+  --svc-plex:          #e5a00d;
+  --svc-disney:        #2aa4ff;
+  --svc-crunchyroll:   #f47521;
+
+  /* ---- Typography ---- */
+  --font-ui:   'Hanken Grotesk', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  /* weights: 400 regular · 500 medium · 600 semibold · 700 bold · 800 extrabold */
+
+  /* type scale (size / weight / tracking) — see README for usage */
+  --t-wordmark:    21px;  /* 800 / -0.04em */
+  --t-display:     38px;  /* 800 / -0.03em / lh 1.05  (detail title) */
+  --t-section:     16px;  /* 700            (section headers) */
+  --t-body:        15.5px;/* 400 / lh 1.65  (description) */
+  --t-ask:         14.5px;/* 400            (ask bar input) */
+  --t-base:        13.5px;/* 400-600        (controls, card title) */
+  --t-sm:          12.5px;/* 500            (chips, buttons) */
+  --t-meta:        11px;  /* mono           (year · type, ratings) */
+  --t-label:       10px;  /* mono / 0.06em / uppercase (eyebrow labels) */
+
+  /* ---- Spacing (px) ---- */
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 10px;
+  --space-5: 12px;
+  --space-6: 14px;
+  --space-7: 18px;
+  --space-8: 22px;   /* page gutter */
+  --space-9: 34px;
+  --grid-gap-x: 18px;
+  --grid-gap-y: 22px;
+
+  /* ---- Radii ---- */
+  --r-sm:   6px;   /* segmented buttons, mini posters */
+  --r-md:   8px;   /* inputs, buttons, poster cards */
+  --r-lg:   11px;  /* ask bar */
+  --r-xl:   12px;  /* detail poster, ask container */
+  --r-2xl:  16px;  /* floating chat card */
+  --r-pill: 999px; /* chips, dots, switcher */
+
+  /* ---- Elevation ---- */
+  --shadow-card-hover: 0 0 0 transparent; /* lift is transform, not shadow */
+  --shadow-poster:    0 24px 50px rgba(0,0,0,0.55);
+  --shadow-rail:      none;
+  --shadow-float:     0 24px 64px rgba(0,0,0,0.62);
+  --shadow-orb:       0 10px 34px rgba(245,197,24,0.32), 0 4px 16px rgba(0,0,0,0.45);
+  --shadow-switcher:  0 8px 30px rgba(0,0,0,0.50);
+  --shadow-askbar:    0 6px 22px rgba(0,0,0,0.40);
+
+  /* ---- Motion ---- */
+  --ease:        cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-hover:   0.16s;  /* card lift, orb scale */
+  --dur-enter:   0.30s;  /* grid item / banner fade-in (cueFade) */
+  --dur-panel:   0.22s;  /* rail / card slide-in (cuePanel) */
+
+  /* ---- Layout constants ---- */
+  --header-h:    58px;
+  --rail-w:      372px;  /* side panel / sticky-dock rail */
+  --float-w:     388px;  /* floating chat card */
+  --poster-ar:   2 / 3;  /* all poster aspect ratios */
+}
+
+/* Card hover lift (apply to the card root) */
+/* .poster-card { transition: transform var(--dur-hover) var(--ease); }
+   .poster-card:hover { transform: translateY(-4px); } */
+
+@keyframes cueFade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes cuePanel { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: translateX(0); } }
