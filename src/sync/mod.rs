@@ -285,6 +285,23 @@ mod orchestrator_tests {
     }
 
     #[tokio::test]
+    async fn run_sync_with_empty_ok_source_completes() {
+        let (p, _dir) = pool().await;
+        let empty = Arc::new(FakeSource {
+            name: "plex",
+            services: vec![Service::Plex],
+            result: Ok(vec![]),
+        }) as Arc<dyn CatalogueSource>;
+        // Must return Ok (not hang/panic) when an ok source yields zero titles.
+        run_sync(&p, &[empty], None).await.unwrap();
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM titles")
+            .fetch_one(&p)
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[tokio::test]
     async fn failed_source_does_not_prune_its_services() {
         let (p, _dir) = pool().await;
         // Pre-populate a crunchyroll title via a successful MOTN-like run.
@@ -325,21 +342,53 @@ mod orchestrator_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn runner_guard_rejects_concurrent_start() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        // A source whose fetch() blocks until released, so the first run is
+        // GUARANTEED in flight when we attempt the second start. An empty-source
+        // run can finish before the second `try_start` on a fast multi-thread
+        // runtime (which made a timing-based version flaky in CI), so gate it.
+        struct BlockingSource {
+            gate: Arc<AtomicBool>,
+        }
+        #[async_trait]
+        impl CatalogueSource for BlockingSource {
+            fn name(&self) -> &'static str {
+                "block"
+            }
+            fn services(&self) -> &'static [Service] {
+                &[Service::Plex]
+            }
+            async fn fetch(&self) -> anyhow::Result<Vec<FetchedTitle>> {
+                while !self.gate.load(Ordering::Acquire) {
+                    tokio::task::yield_now().await;
+                }
+                Ok(Vec::new())
+            }
+        }
+
         let (p, _dir) = pool().await;
-        let runner = SyncRunner::new(p, vec![], None);
-        // First start is accepted and marks the runner busy.
+        let gate = Arc::new(AtomicBool::new(false));
+        let src = Arc::new(BlockingSource { gate: gate.clone() }) as Arc<dyn CatalogueSource>;
+        let runner = SyncRunner::new(p, vec![src], None);
+
+        // First start is accepted; its fetch() now blocks on the gate.
         assert!(runner.try_start(), "first start accepted");
-        // A second start while the first run is in flight is rejected.
+        // A second start is rejected while the first run is in flight —
+        // deterministic, since the first run cannot finish until we release.
         assert!(
             !runner.try_start(),
             "second start rejected while a run is in flight"
         );
-        // The guard clears once the spawned run completes.
-        for _ in 0..1000 {
+        // Release the gate; the guard must clear once the run completes. Wait in
+        // real time (not a yield-spin, which finishes far faster than the spawned
+        // run's actual DB I/O) up to a generous bound.
+        gate.store(true, Ordering::Release);
+        for _ in 0..5_000 {
             if !runner.is_running() {
                 break;
             }
-            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
         assert!(!runner.is_running(), "guard resets after the run completes");
     }
