@@ -7,6 +7,9 @@ use crate::db::embeddings as embed_db;
 
 pub const EMBED_MODEL: &str = "text-embedding-3-small";
 const OPENAI_URL: &str = "https://api.openai.com/v1/embeddings";
+/// Max inputs per embeddings request. `OpenAI` caps a request at 2048 inputs (and
+/// a total token budget); a full catalogue exceeds that in one shot, so batch.
+const EMBED_BATCH: usize = 100;
 
 /// Produces an embedding for each input text, preserving input order.
 #[async_trait]
@@ -59,18 +62,30 @@ impl Embedder for OpenAiEmbedder {
         struct Item {
             embedding: Vec<f32>,
         }
-        let body = serde_json::json!({ "model": EMBED_MODEL, "input": texts });
-        let resp: Resp = self
-            .client
-            .post(OPENAI_URL)
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        Ok(resp.data.into_iter().map(|i| i.embedding).collect())
+        // Batch: a single request with the whole catalogue exceeds OpenAI's
+        // per-request input cap and 400s. Chunks are sent in order and results
+        // concatenated, preserving input order.
+        let mut out: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
+        for chunk in texts.chunks(EMBED_BATCH) {
+            let body = serde_json::json!({ "model": EMBED_MODEL, "input": chunk });
+            let resp = self
+                .client
+                .post(OPENAI_URL)
+                .bearer_auth(&self.api_key)
+                .json(&body)
+                .send()
+                .await?;
+            // Surface OpenAI's error body instead of swallowing it with
+            // `error_for_status` (a bare status hides *why* it 400'd).
+            let status = resp.status();
+            if !status.is_success() {
+                let detail = resp.text().await.unwrap_or_default();
+                anyhow::bail!("OpenAI embeddings request failed ({status}): {detail}");
+            }
+            let parsed: Resp = resp.json().await?;
+            out.extend(parsed.data.into_iter().map(|i| i.embedding));
+        }
+        Ok(out)
     }
 }
 
