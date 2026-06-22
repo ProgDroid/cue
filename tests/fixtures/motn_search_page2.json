@@ -10,7 +10,10 @@
       "cast": ["Taito Ban"],
       "rating": 84,
       "seasonCount": 2,
-      "episodeCount": 25
+      "episodeCount": 25,
+      "streamingOptions": {
+        "gb": [{ "service": { "id": "crunchyroll" }, "type": "subscription" }]
+      }
     }
   ],
   "hasMore": false,

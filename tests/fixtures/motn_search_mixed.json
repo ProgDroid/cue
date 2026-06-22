@@ -1,0 +1,33 @@
+{
+  "shows": [
+    {
+      "imdbId": "tt1000001",
+      "title": "Disney Only Film",
+      "overview": "On Disney+ only.",
+      "showType": "movie",
+      "releaseYear": 2020,
+      "genres": [{ "name": "Family" }],
+      "runtime": 100,
+      "streamingOptions": {
+        "gb": [{ "service": { "id": "disney" }, "type": "subscription" }]
+      }
+    },
+    {
+      "imdbId": "tt1000002",
+      "title": "Crunchyroll Series",
+      "overview": "Anime on Crunchyroll (also via a Prime addon).",
+      "showType": "series",
+      "firstAirYear": 2021,
+      "genres": [{ "name": "Animation" }],
+      "episodeCount": 12,
+      "streamingOptions": {
+        "gb": [
+          { "service": { "id": "prime" }, "type": "addon", "addon": { "id": "crunchyrolluk" } },
+          { "service": { "id": "crunchyroll" }, "type": "subscription" }
+        ]
+      }
+    }
+  ],
+  "hasMore": false,
+  "nextCursor": null
+}

@@ -81,6 +81,19 @@ struct Show {
     rating: Option<f64>,
     runtime: Option<i64>,
     episode_count: Option<i64>,
+    // Per-country streaming availability; each option names the `service` it's on.
+    #[serde(default)]
+    streaming_options: HashMap<String, Vec<StreamOption>>,
+}
+
+#[derive(Deserialize)]
+struct StreamOption {
+    service: ServiceRef,
+}
+
+#[derive(Deserialize)]
+struct ServiceRef {
+    id: String,
 }
 
 #[derive(Deserialize)]
@@ -88,13 +101,18 @@ struct Named {
     name: String,
 }
 
-/// Parse one search page into `(titles, next_cursor)`. `services` is the
-/// membership stamped on every title from this fetch.
+/// Parse one search page into `(titles, next_cursor)`.
+///
+/// Each title is stamped with only the wanted services its
+/// `streamingOptions[country]` actually lists, so a combined
+/// `disney,crunchyroll` search attributes each title correctly instead of
+/// tagging every result with both services.
 ///
 /// # Errors
 /// Returns an error if the JSON does not match the expected shape.
 pub fn parse_page(
     json: &str,
+    country: &str,
     services: &[Service],
 ) -> anyhow::Result<(Vec<FetchedTitle>, Option<String>)> {
     let page: Page = serde_json::from_str(json)?;
@@ -112,6 +130,28 @@ pub fn parse_page(
                 TitleKind::Movie => s.runtime.map(|m| format!("{m} min")),
                 TitleKind::Series => s.episode_count.map(|e| format!("{e} eps")),
             };
+            // Attribute only the wanted services this title is actually on
+            // (scoped so the borrow of `streaming_options` ends before the moves).
+            let svcs = {
+                let available: HashSet<&str> = s
+                    .streaming_options
+                    .get(country)
+                    .map(|opts| opts.iter().map(|o| o.service.id.as_str()).collect())
+                    .unwrap_or_default();
+                let attributed: Vec<Service> = services
+                    .iter()
+                    .copied()
+                    .filter(|svc| wanted_id(*svc).is_some_and(|id| available.contains(id)))
+                    .collect();
+                // A search result should be on at least one searched service; if
+                // streamingOptions is missing/unexpected, never drop the title —
+                // fall back to the searched set.
+                if attributed.is_empty() {
+                    services.to_vec()
+                } else {
+                    attributed
+                }
+            };
             FetchedTitle {
                 imdb_id: s.imdb_id,
                 tmdb_id: s.tmdb_id,
@@ -124,7 +164,7 @@ pub fn parse_page(
                 description: s.overview,
                 genres: s.genres.into_iter().map(|g| g.name).collect(),
                 cast: s.cast,
-                services: services.to_vec(),
+                services: svcs,
             }
         })
         .collect();
@@ -134,6 +174,11 @@ pub fn parse_page(
         None
     };
     Ok((titles, cursor))
+}
+
+/// The MOTN catalog id for a wanted service (`Disney` → "disney", etc.).
+fn wanted_id(svc: Service) -> Option<&'static str> {
+    WANTED.iter().find(|(s, _)| *s == svc).map(|(_, id)| *id)
 }
 
 /// Live MOTN client.
@@ -201,7 +246,7 @@ impl CatalogueSource for MotnClient {
                 req = req.query(&[("cursor", c.as_str())]);
             }
             let body = req.send().await?.error_for_status()?.text().await?;
-            let (mut titles, next) = parse_page(&body, &services)?;
+            let (mut titles, next) = parse_page(&body, &self.country, &services)?;
             out.append(&mut titles);
             match next {
                 Some(c) => cursor = Some(c),
@@ -231,7 +276,7 @@ mod tests {
     #[test]
     fn parse_page_reads_movie_fields_and_cursor() {
         let json = include_str!("../../tests/fixtures/motn_search_page1.json");
-        let (titles, cursor) = parse_page(json, &[Service::Disney]).unwrap();
+        let (titles, cursor) = parse_page(json, "gb", &[Service::Disney]).unwrap();
         assert_eq!(cursor.as_deref(), Some("354912:Coco"));
         let t = &titles[0];
         assert_eq!(t.imdb_id.as_deref(), Some("tt2380307"));
@@ -248,11 +293,39 @@ mod tests {
     #[test]
     fn parse_page_reads_series_and_terminal_cursor() {
         let json = include_str!("../../tests/fixtures/motn_search_page2.json");
-        let (titles, cursor) = parse_page(json, &[Service::Crunchyroll]).unwrap();
+        let (titles, cursor) = parse_page(json, "gb", &[Service::Crunchyroll]).unwrap();
         assert_eq!(cursor, None);
         let t = &titles[0];
         assert_eq!(t.kind, TitleKind::Series);
         assert_eq!(t.year, Some(2024));
         assert_eq!(t.length.as_deref(), Some("25 eps"));
+        assert_eq!(t.services, vec![Service::Crunchyroll]);
+    }
+
+    #[test]
+    fn parse_page_attributes_services_per_title() {
+        // Combined disney,crunchyroll search: each title must be tagged only with
+        // the service(s) its streamingOptions[gb] actually lists, not both.
+        let json = include_str!("../../tests/fixtures/motn_search_mixed.json");
+        let (titles, _) =
+            parse_page(json, "gb", &[Service::Disney, Service::Crunchyroll]).unwrap();
+        assert_eq!(
+            titles[0].services,
+            vec![Service::Disney],
+            "disney-only title tagged disney only"
+        );
+        assert_eq!(
+            titles[1].services,
+            vec![Service::Crunchyroll],
+            "crunchyroll title (also a Prime addon) tagged crunchyroll only, not both"
+        );
+    }
+
+    #[test]
+    fn parse_page_falls_back_when_streaming_options_absent() {
+        // No streamingOptions at all -> never drop the title; keep the searched set.
+        let json = r#"{ "shows": [ { "title": "X", "showType": "movie" } ], "hasMore": false }"#;
+        let (titles, _) = parse_page(json, "gb", &[Service::Disney]).unwrap();
+        assert_eq!(titles[0].services, vec![Service::Disney]);
     }
 }

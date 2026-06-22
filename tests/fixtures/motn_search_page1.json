@@ -10,7 +10,10 @@
       "genres": [{ "name": "Animation" }, { "name": "Family" }],
       "cast": ["Anthony Gonzalez"],
       "rating": 82,
-      "runtime": 105
+      "runtime": 105,
+      "streamingOptions": {
+        "gb": [{ "service": { "id": "disney" }, "type": "subscription" }]
+      }
     }
   ],
   "hasMore": true,
