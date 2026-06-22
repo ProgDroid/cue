@@ -29,3 +29,27 @@ export interface ThreadStep {
   sub: string
   ids: number[]
 }
+
+export interface SourceRun {
+  source: string
+  lastRun: string | null
+  status: string
+  itemCount: number
+}
+export interface CatalogueStats {
+  titles: number
+  movies: number
+  series: number
+  embedded: number
+}
+export interface LastRun {
+  status: string
+  itemCount: number
+  finishedAt: string | null
+}
+export interface SyncStatus {
+  running: boolean
+  lastRun: LastRun | null
+  sources: SourceRun[]
+  catalogue: CatalogueStats
+}
