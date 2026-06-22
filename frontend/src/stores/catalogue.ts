@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
-import type { ServiceKey, Title, TitleKind } from '@/types'
+import type { ServiceKey, Title, TitleKind, ThreadStep, AskResult } from '@/types'
 import { getCatalogue } from '@/api/client'
+import { askService } from '@/services'
 
 type Status = 'idle' | 'loading' | 'ready' | 'error'
 type ServiceFilter = 'all' | ServiceKey
@@ -18,6 +19,12 @@ interface State {
   sort: SortKey
   watched: Record<number, boolean>
   ratings: Record<number, number>
+  answerActive: boolean
+  resultIds: number[]
+  line: string
+  sub: string
+  thread: ThreadStep[]
+  resolving: boolean
 }
 
 export const useCatalogueStore = defineStore('catalogue', {
@@ -32,6 +39,12 @@ export const useCatalogueStore = defineStore('catalogue', {
     sort: 'trending',
     watched: {},
     ratings: {},
+    answerActive: false,
+    resultIds: [],
+    line: '',
+    sub: '',
+    thread: [],
+    resolving: false,
   }),
 
   getters: {
@@ -58,7 +71,10 @@ export const useCatalogueStore = defineStore('catalogue', {
     },
 
     visibleTitles(state): Title[] {
-      let out = state.catalogue.slice() // base set (answer set overrides this in Task 12)
+      const base = state.answerActive
+        ? state.resultIds.map(id => state.catalogue.find(t => t.id === id)).filter((t): t is Title => !!t)
+        : state.catalogue.slice()
+      let out = base
       const q = state.query.trim().toLowerCase()
       if (q) out = out.filter(t => t.title.toLowerCase().includes(q))
       if (state.service !== 'all') out = out.filter(t => t.services.includes(state.service as ServiceKey))
@@ -102,6 +118,43 @@ export const useCatalogueStore = defineStore('catalogue', {
         this.error = e instanceof Error ? e.message : 'Failed to load catalogue'
         this.status = 'error'
       }
+    },
+
+    applyResult(label: string, r: AskResult) {
+      this.answerActive = true
+      this.resultIds = r.ids
+      this.line = r.line
+      this.sub = r.sub
+      this.thread.push({ label, line: r.line, sub: r.sub, ids: r.ids })
+    },
+
+    async submitAsk(q: string) {
+      this.resolving = true
+      try { this.applyResult(q, await askService.ask(q, this.catalogue)) }
+      finally { this.resolving = false }
+    },
+
+    async refine(kind: 'lighter' | 'shorter' | 'surprise') {
+      const current = this.resultIds.map(id => this.catalogue.find(t => t.id === id)!).filter(Boolean)
+      this.resolving = true
+      try { this.applyResult(`↻ ${kind}`, await askService.refine(kind, current)) }
+      finally { this.resolving = false }
+    },
+
+    async moreLike(title: Title) {
+      this.resolving = true
+      try { this.applyResult(`≈ ${title.title}`, askService.similar(title, this.catalogue)) }
+      finally { this.resolving = false }
+    },
+
+    stepThread(i: number) {
+      const step = this.thread[i]; if (!step) return
+      this.thread = this.thread.slice(0, i + 1)
+      this.resultIds = step.ids; this.line = step.line; this.sub = step.sub; this.answerActive = true
+    },
+
+    clearThread() {
+      this.answerActive = false; this.resultIds = []; this.line = ''; this.sub = ''; this.thread = []
     },
   },
 })
