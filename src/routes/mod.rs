@@ -1,5 +1,6 @@
 pub mod ask;
 pub mod catalogue;
+pub mod sync;
 
 use actix_web::{web, HttpResponse};
 
@@ -14,6 +15,8 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/catalogue", web::get().to(catalogue::get_catalogue))
             .route("/ask", web::post().to(ask::ask))
             .route("/ask/similar", web::post().to(ask::similar))
-            .route("/ask/refine", web::post().to(ask::refine)),
+            .route("/ask/refine", web::post().to(ask::refine))
+            .route("/sync", web::post().to(sync::trigger))
+            .route("/sync/status", web::get().to(sync::status)),
     );
 }
