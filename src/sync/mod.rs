@@ -110,6 +110,10 @@ pub async fn run_sync(
     // (either successfully reconciled or explicitly failed/protected).
     // This preserves titles exclusively owned by failed sources (scoped prune)
     // while removing stale seed/previous data from unrelated services.
+    // Prune only when at least one source succeeded. If every source failed
+    // (a total outage), skip pruning entirely so a transient outage never
+    // empties the catalogue. `all_touched` includes failed sources' services
+    // so their existing titles are never pruned when another source did sync.
     if !unique_ok.is_empty() {
         let all_touched: Vec<&str> = unique_ok
             .iter()

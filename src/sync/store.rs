@@ -292,6 +292,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn prune_orphans_scoped_removes_titles_outside_touched_services() {
+        let (p, _dir) = pool().await;
+        let c = upsert_title(&p, &merged("ttC", "C", &[], &[Service::Crunchyroll]))
+            .await
+            .unwrap();
+        let pl = upsert_title(&p, &merged("ttP", "P", &[], &[Service::Plex]))
+            .await
+            .unwrap();
+        reconcile_service(&p, Service::Crunchyroll, &[c])
+            .await
+            .unwrap();
+        reconcile_service(&p, Service::Plex, &[pl]).await.unwrap();
+        // Both services touched -> both titles have a touched membership -> kept.
+        let kept =
+            prune_orphans_scoped(&p, &[Service::Plex.as_str(), Service::Crunchyroll.as_str()])
+                .await
+                .unwrap();
+        assert_eq!(kept, 0);
+        // Only Plex touched -> the Crunchyroll-only title is outside the touched set -> pruned.
+        let removed = prune_orphans_scoped(&p, &[Service::Plex.as_str()])
+            .await
+            .unwrap();
+        assert_eq!(removed, 1);
+        let remaining: Vec<i64> = sqlx::query_scalar("SELECT id FROM titles ORDER BY id")
+            .fetch_all(&p)
+            .await
+            .unwrap();
+        assert_eq!(remaining, vec![pl]);
+    }
+
+    #[tokio::test]
+    async fn prune_orphans_scoped_empty_touched_is_noop() {
+        let (p, _dir) = pool().await;
+        let pl = upsert_title(&p, &merged("ttP", "P", &[], &[Service::Plex]))
+            .await
+            .unwrap();
+        reconcile_service(&p, Service::Plex, &[pl]).await.unwrap();
+        let removed = prune_orphans_scoped(&p, &[]).await.unwrap();
+        assert_eq!(removed, 0, "no touched services -> prune nothing");
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM titles")
+            .fetch_one(&p)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
     async fn prune_spares_titles_owned_by_an_untouched_service() {
         let (p, _dir) = pool().await;
         let x = upsert_title(&p, &merged("tt3", "X", &[], &[Service::Crunchyroll]))
