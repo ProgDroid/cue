@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::models::Service;
 use crate::sync::merge::MergedTitle;
@@ -39,29 +39,33 @@ async fn find_existing(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<Opt
     Ok(None)
 }
 
-/// Replace a title's genre + cast child rows.
-async fn replace_children(pool: &SqlitePool, id: i64, t: &MergedTitle) -> anyhow::Result<()> {
+/// Replace a title's genre + cast child rows inside an open transaction.
+async fn replace_children(
+    conn: &mut SqliteConnection,
+    id: i64,
+    t: &MergedTitle,
+) -> anyhow::Result<()> {
     sqlx::query("DELETE FROM title_genres WHERE title_id = ?")
         .bind(id)
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
     for g in &t.genres {
         sqlx::query("INSERT OR IGNORE INTO title_genres (title_id, genre) VALUES (?, ?)")
             .bind(id)
             .bind(g)
-            .execute(pool)
+            .execute(&mut *conn)
             .await?;
     }
     sqlx::query("DELETE FROM title_cast WHERE title_id = ?")
         .bind(id)
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
     for (ord, person) in t.cast.iter().enumerate() {
         sqlx::query("INSERT OR IGNORE INTO title_cast (title_id, person, ord) VALUES (?, ?, ?)")
             .bind(id)
             .bind(person)
             .bind(i64::try_from(ord).unwrap_or(i64::MAX))
-            .execute(pool)
+            .execute(&mut *conn)
             .await?;
     }
     Ok(())
@@ -69,10 +73,17 @@ async fn replace_children(pool: &SqlitePool, id: i64, t: &MergedTitle) -> anyhow
 
 /// Insert a new title or update the existing one matched by identity. Returns its id.
 ///
+/// All writes (title row + genres + cast) are wrapped in a single transaction so a
+/// crash mid-operation cannot leave the title without its child rows.
+///
 /// # Errors
 /// Returns an error if any query fails.
 pub async fn upsert_title(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<i64> {
-    let id = if let Some(id) = find_existing(pool, t).await? {
+    // Identity lookup runs outside the tx — read-only, no consistency risk.
+    let existing = find_existing(pool, t).await?;
+
+    let mut tx = pool.begin().await?;
+    let id = if let Some(id) = existing {
         sqlx::query(
             "UPDATE titles SET imdb_id = ?, tmdb_id = ?, plex_guid = ?, title = ?, year = ?,
              type = ?, imdb_rating = ?, length = ?, description = ?, updated_at = datetime('now')
@@ -88,7 +99,7 @@ pub async fn upsert_title(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<
         .bind(&t.length)
         .bind(&t.description)
         .bind(id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
         id
     } else {
@@ -105,14 +116,18 @@ pub async fn upsert_title(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<
         .bind(t.imdb_rating)
         .bind(&t.length)
         .bind(&t.description)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await?
     };
-    replace_children(pool, id, t).await?;
+    replace_children(&mut tx, id, t).await?;
+    tx.commit().await?;
     Ok(id)
 }
 
 /// Make `title_services` for `service` exactly match `desired_ids`.
+///
+/// The delete-stale and insert-missing passes run inside a single transaction so
+/// the result is always exactly `desired_ids`, even if interrupted.
 ///
 /// # Errors
 /// Returns an error if any query fails.
@@ -122,17 +137,20 @@ pub async fn reconcile_service(
     desired_ids: &[i64],
 ) -> anyhow::Result<()> {
     let want: HashSet<i64> = desired_ids.iter().copied().collect();
+    // Read current membership outside the tx — consistent snapshot for the diff.
     let current: Vec<i64> =
         sqlx::query_scalar("SELECT title_id FROM title_services WHERE service = ?")
             .bind(service.as_str())
             .fetch_all(pool)
             .await?;
+
+    let mut tx = pool.begin().await?;
     for id in current {
         if !want.contains(&id) {
             sqlx::query("DELETE FROM title_services WHERE service = ? AND title_id = ?")
                 .bind(service.as_str())
                 .bind(id)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
         }
     }
@@ -140,9 +158,10 @@ pub async fn reconcile_service(
         sqlx::query("INSERT OR IGNORE INTO title_services (title_id, service) VALUES (?, ?)")
             .bind(id)
             .bind(service.as_str())
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
     }
+    tx.commit().await?;
     Ok(())
 }
 
