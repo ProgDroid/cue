@@ -2,6 +2,8 @@
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useCatalogueStore } from '@/stores/catalogue'
+import AskBar from '@/components/AskBar.vue'
+import ThreadBreadcrumb from '@/components/ThreadBreadcrumb.vue'
 import FilterBar from '@/components/FilterBar.vue'
 import PosterGrid from '@/components/PosterGrid.vue'
 import type { Title } from '@/types'
@@ -25,6 +27,11 @@ function onFindSimilar(_t: Title) {
 
 <template>
   <div class="browse-view">
+    <div class="ask-dock">
+      <AskBar />
+      <ThreadBreadcrumb />
+    </div>
+
     <FilterBar />
 
     <PosterGrid
@@ -43,6 +50,14 @@ function onFindSimilar(_t: Title) {
 <style scoped>
 .browse-view {
   min-height: 100%;
+}
+
+.ask-dock {
+  position: sticky;
+  top: 0;
+  z-index: 22;
+  padding: 18px 22px 12px;
+  background: linear-gradient(180deg, #0b0c0f 76%, rgba(11, 12, 15, 0));
 }
 
 .empty-state {
