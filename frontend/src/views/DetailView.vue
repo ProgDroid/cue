@@ -189,13 +189,13 @@ onMounted(() => {
 .scrim-bottom {
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, rgba(11, 12, 15, 0.2) 0%, rgba(11, 12, 15, 0.55) 55%, #0b0c0f 100%);
+  background: linear-gradient(180deg, rgba(11, 12, 15, 0.2) 0%, rgba(11, 12, 15, 0.55) 55%, var(--bg-app, #0b0c0f) 100%);
 }
 
 .scrim-left {
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg, #0b0c0f 8%, transparent 55%);
+  background: linear-gradient(90deg, var(--bg-app, #0b0c0f) 8%, transparent 55%);
 }
 
 .back-btn {
@@ -210,7 +210,7 @@ onMounted(() => {
   backdrop-filter: blur(8px);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
-  color: #e9ebf0;
+  color: var(--text-primary, #e9ebf0);
   font-family: var(--font-ui, 'Hanken Grotesk', sans-serif);
   font-size: 13px;
   font-weight: 500;
@@ -305,7 +305,7 @@ onMounted(() => {
 .rating-well {
   margin-top: 14px;
   padding: 14px;
-  background: #15171c;
+  background: var(--surface-1, #15171c);
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 10px;
 }
@@ -315,7 +315,7 @@ onMounted(() => {
   font-size: 10px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #5f6570;
+  color: var(--text-faint, #5f6570);
   margin-bottom: 9px;
 }
 
@@ -355,7 +355,7 @@ onMounted(() => {
 }
 
 .imdb-star {
-  color: #f5c518;
+  color: var(--accent, #f5c518);
   font-size: 11px;
 }
 
@@ -363,7 +363,7 @@ onMounted(() => {
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
   font-size: 11px;
   font-weight: 600;
-  color: #f5d24e;
+  color: var(--accent-text, #f5d24e);
 }
 
 .imdb-label {
@@ -379,13 +379,13 @@ onMounted(() => {
   font-weight: 800;
   letter-spacing: -0.03em;
   line-height: 1.05;
-  color: #f4f5f7;
+  color: var(--text-strong, #f4f5f7);
 }
 
 .fact-line {
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
   font-size: 12.5px;
-  color: #8a909b;
+  color: var(--text-muted, #8a909b);
   margin-top: 10px;
 }
 
@@ -393,7 +393,7 @@ onMounted(() => {
 .desc {
   font-size: 15.5px;
   line-height: 1.65;
-  color: #c2c7d0;
+  color: var(--text-secondary, #c2c7d0);
   max-width: 600px;
   margin: 18px 0 0;
 }
@@ -408,7 +408,7 @@ onMounted(() => {
   font-size: 10px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #5f6570;
+  color: var(--text-faint, #5f6570);
   margin-bottom: 9px;
 }
 
@@ -420,11 +420,11 @@ onMounted(() => {
 
 .cast-chip {
   padding: 6px 12px;
-  background: #15171c;
+  background: var(--surface-1, #15171c);
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 8px;
   font-size: 13px;
-  color: #c2c7d0;
+  color: var(--text-secondary, #c2c7d0);
 }
 
 /* Similar titles mini-grid */
@@ -442,13 +442,13 @@ onMounted(() => {
 .similar-heading {
   font-size: 16px;
   font-weight: 700;
-  color: #e9ebf0;
+  color: var(--text-primary, #e9ebf0);
 }
 
 .similar-sub {
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
   font-size: 11px;
-  color: #5f6570;
+  color: var(--text-faint, #5f6570);
 }
 
 .similar-grid {

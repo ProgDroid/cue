@@ -97,7 +97,7 @@ onUnmounted(() => { if (poll) clearInterval(poll) })
 .settings__back { color: var(--text-muted, #aab0bb); text-decoration: none; font-size: 13px; }
 .settings__row { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
 .settings__msg { color: var(--text-muted, #aab0bb); font-size: 13px; }
-.settings__error { color: #f5a3a3; margin-top: 16px; }
+.settings__error { color: var(--text-danger, #f5a3a3); margin-top: 16px; }
 .settings__grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .card { background: var(--surface-1, #15171c); border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: var(--r-md, 8px); padding: 16px; }
 .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint, #5f6570); margin: 0 0 10px; }

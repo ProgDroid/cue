@@ -27,6 +27,7 @@
   --text-muted:        #8a909b;
   --text-faint:        #5f6570;  /* mono captions */
   --text-faintest:     #4f555f;  /* uppercase mono labels */
+  --text-danger:       #f5a3a3;  /* error/failure messages */
 
   /* ---- Accent (single amber) ---- */
   --accent:            #f5c518;  /* stars, active state, primary buttons */
