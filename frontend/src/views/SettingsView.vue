@@ -72,11 +72,12 @@ async function refresh() {
 }
 
 async function onSync() {
+  if (busy.value) return
   message.value = ''
   error.value = ''
+  busy.value = true
   try {
     const result = await triggerSync()
-    busy.value = true
     message.value = result === 'running' ? 'a sync is already running' : 'sync started'
     if (!poll) poll = setInterval(refresh, 3000)
     await refresh()
