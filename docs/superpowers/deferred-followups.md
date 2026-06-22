@@ -44,23 +44,26 @@ live but still working acceptably:
 - **Auth (token/login)** — no-op middleware slot reserved (D7); single-user /
   `127.0.0.1` for now.
 
-## Sync hardening (confirm against real data)
-
-- **`parse_section` defaults an unknown Plex `type` to `Movie`.** In practice
-  `fetch()` only feeds `movie`/`show` sections, so it is not triggered; confirm
-  real Plex `type` strings during live verification and harden (skip/log) if
-  other top-level types appear.
-
-## Ops / CI
-
-- **PR-triggered `ci.yml`.** Only push-to-`main` is gated (by
-  `docker-publish.yml`); PRs currently run no CI. Add a PR workflow mirroring
-  the backend + frontend gates (cargo test + clippy; npm test + build).
-
 ## Polish (cosmetic, non-blocking)
 
-- `DetailView` hardcodes some hex colours instead of token vars; `SettingsView`
-  error text uses a hardcoded `#f5a3a3`. Move to design tokens.
-- Micro-opts surfaced in review and deferred: `merge::merge` capacity hints +
-  an avoidable first-seen `genres.clone()`; `db::sync_runs::catalogue_stats`
-  uses 4 queries where 1–2 aggregates would do.
+- Two `DetailView` colour literals remain bare because no design token matches
+  their value: `#8a7a30` (dimmed-amber IMDb label) and `#d2d6dd` (sim-card
+  title — nearest is `--text-secondary` `#c2c7d0`, which would shift the
+  rendered colour). Add tokens for them if they should be themeable; otherwise
+  leave as intentional one-offs.
+
+---
+
+### Cleared 2026-06-22 (in-repo follow-ups)
+
+- ✅ **PR-triggered CI** — `.github/workflows/ci.yml` mirrors the backend
+  (clippy + test) and frontend (build + test) gates on `pull_request` to `main`.
+- ✅ **`parse_section` hardening** — unknown Plex `type` values are now skipped
+  with a `tracing::warn!` instead of being coerced to `Movie`
+  (`skips_items_with_unexpected_type` test added).
+- ✅ **Tokenised `DetailView`/`SettingsView` hex literals** — exact-match hexes
+  moved to `var(--token, #fallback)`; added a `--text-danger` token for the
+  Settings error text.
+- ✅ **Micro-opts** — `merge::merge` now sizes its maps with capacity hints and
+  moves (not clones) first-seen genres; `catalogue_stats` collapsed 4 queries
+  into 2 (one aggregate over `titles`, one count over `title_embeddings`).

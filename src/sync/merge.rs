@@ -75,10 +75,12 @@ pub fn identity_key(
 /// Panics if a key in `order` is not found in `by_key` (invariant bug).
 #[must_use]
 pub fn merge(fetched: Vec<FetchedTitle>) -> Vec<MergedTitle> {
-    let mut order: Vec<String> = Vec::new();
-    let mut by_key: HashMap<String, MergedTitle> = HashMap::new();
+    // Upper bound on distinct keys is one per fetched row; size the maps once.
+    let n = fetched.len();
+    let mut order: Vec<String> = Vec::with_capacity(n);
+    let mut by_key: HashMap<String, MergedTitle> = HashMap::with_capacity(n);
     // Accumulate raw (un-normalized) genres per key, normalize once at the end.
-    let mut raw_genres: HashMap<String, Vec<String>> = HashMap::new();
+    let mut raw_genres: HashMap<String, Vec<String>> = HashMap::with_capacity(n);
 
     for f in fetched {
         let key = identity_key(
@@ -88,10 +90,8 @@ pub fn merge(fetched: Vec<FetchedTitle>) -> Vec<MergedTitle> {
             &f.title,
             f.year.unwrap_or(0),
         );
-        raw_genres
-            .entry(key.clone())
-            .or_default()
-            .extend(f.genres.clone());
+        // `f.genres` is only used here, so move it in rather than clone.
+        raw_genres.entry(key.clone()).or_default().extend(f.genres);
         if let Some(existing) = by_key.get_mut(&key) {
             for s in f.services {
                 if !existing.services.contains(&s) {

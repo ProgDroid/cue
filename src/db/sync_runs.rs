@@ -74,15 +74,17 @@ pub async fn latest_per_source(pool: &SqlitePool) -> anyhow::Result<Vec<SourceRu
 /// # Errors
 /// Returns an error if a query fails.
 pub async fn catalogue_stats(pool: &SqlitePool) -> anyhow::Result<CatalogueStats> {
-    let titles: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM titles")
-        .fetch_one(pool)
-        .await?;
-    let movies: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM titles WHERE type = 'movie'")
-        .fetch_one(pool)
-        .await?;
-    let series: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM titles WHERE type = 'series'")
-        .fetch_one(pool)
-        .await?;
+    // One aggregate over `titles` (SUM of a boolean predicate counts each kind;
+    // COALESCE handles the empty-table NULL); `embedded` is a separate table.
+    let (titles, movies, series): (i64, i64, i64) = sqlx::query_as(
+        "SELECT
+             COUNT(*),
+             COALESCE(SUM(type = 'movie'), 0),
+             COALESCE(SUM(type = 'series'), 0)
+         FROM titles",
+    )
+    .fetch_one(pool)
+    .await?;
     let embedded: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM title_embeddings")
         .fetch_one(pool)
         .await?;
