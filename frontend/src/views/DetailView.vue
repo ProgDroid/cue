@@ -26,6 +26,13 @@ const similar = computed(() => title.value ? store.similar(id.value) : [])
 
 function back() { router.push('/') }
 
+// Wrappers that resolve id.value in script scope so the template never
+// passes the ComputedRef object itself into store methods.
+const idIsWatched = computed(() => store.isWatched(id.value))
+function toggleWatched() { store.toggleWatched(id.value) }
+const idRating = computed(() => store.ratingOf(id.value))
+function setRating(n: number) { store.setRating(id.value, n) }
+
 onMounted(() => {
   if (store.catalogue.length === 0) {
     store.load()
@@ -61,19 +68,20 @@ onMounted(() => {
 
         <!-- Mark as watched button -->
         <button
+          data-test="mark-watched"
           class="watched-btn"
-          :class="{ 'watched-btn--active': store.isWatched(id) }"
-          @click="store.toggleWatched(id)"
+          :class="{ 'watched-btn--active': idIsWatched }"
+          @click="toggleWatched"
         >
-          {{ store.isWatched(id) ? '✓ Watched' : 'Mark as watched' }}
+          {{ idIsWatched ? '✓ Watched' : 'Mark as watched' }}
         </button>
 
         <!-- Your rating well -->
         <div class="rating-well">
           <div class="rating-eyebrow">Your rating</div>
           <StarRating
-            :value="store.ratingOf(id)"
-            @set="n => store.setRating(id, n)"
+            :value="idRating"
+            @set="setRating"
           />
         </div>
       </div>
