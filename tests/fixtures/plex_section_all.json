@@ -1,0 +1,26 @@
+{
+  "MediaContainer": {
+    "Metadata": [
+      {
+        "type": "movie",
+        "title": "Blade Runner 2049",
+        "year": 2017,
+        "summary": "A young blade runner uncovers a secret.",
+        "rating": 8.0,
+        "duration": 9840000,
+        "Guid": [{ "id": "imdb://tt1856101" }, { "id": "tmdb://335984" }],
+        "Genre": [{ "tag": "Sci-Fi" }, { "tag": "Drama" }],
+        "Role": [{ "tag": "Ryan Gosling" }, { "tag": "Harrison Ford" }]
+      },
+      {
+        "type": "show",
+        "title": "Severance",
+        "year": 2022,
+        "summary": "Workers split memories.",
+        "Guid": [{ "id": "imdb://tt11280740" }],
+        "Genre": [{ "tag": "Thriller" }],
+        "Role": [{ "tag": "Adam Scott" }]
+      }
+    ]
+  }
+}

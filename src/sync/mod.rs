@@ -12,6 +12,7 @@ use crate::models::{Service, TitleKind};
 use crate::services::embeddings::{backfill, Embedder};
 
 pub mod merge;
+pub mod plex;
 pub mod store;
 
 /// A source-agnostic catalogue row emitted by every `CatalogueSource`.
