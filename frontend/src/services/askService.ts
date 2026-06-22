@@ -11,7 +11,7 @@ function lenMinutes(len: string): number {
 export interface AskService {
   ask(query: string, base: Title[]): Promise<AskResult>
   refine(kind: 'lighter' | 'shorter' | 'surprise', current: Title[]): Promise<AskResult>
-  similar(title: Title, all: Title[]): AskResult
+  similar(title: Title, all: Title[]): Promise<AskResult>
 }
 
 export class StubAskService implements AskService {
@@ -41,7 +41,8 @@ export class StubAskService implements AskService {
     return { line: 'A surprise for you.', sub: `${pick.length} · refine or filter to narrow`, ids: pick }
   }
 
-  similar(title: Title, all: Title[]): AskResult {
+  async similar(title: Title, all: Title[]): Promise<AskResult> {
+    await Promise.resolve() // keep the await seam consistent with ask/refine
     const g = new Set(title.genres)
     const ids = all
       .filter(t => t.id !== title.id && t.genres.some(x => g.has(x)))

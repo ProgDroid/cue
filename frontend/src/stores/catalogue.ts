@@ -143,7 +143,7 @@ export const useCatalogueStore = defineStore('catalogue', {
 
     async moreLike(title: Title) {
       this.resolving = true
-      try { this.applyResult(`≈ ${title.title}`, askService.similar(title, this.catalogue)) }
+      try { this.applyResult(`≈ ${title.title}`, await askService.similar(title, this.catalogue)) }
       finally { this.resolving = false }
     },
 

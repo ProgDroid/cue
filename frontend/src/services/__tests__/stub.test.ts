@@ -34,8 +34,8 @@ describe('StubAskService', () => {
     expect(r.ids).toEqual([2, 3, 1])
   })
 
-  it('similar() ranks by shared genre', () => {
-    const r = svc.similar(cat[0], cat)
+  it('similar() ranks by shared genre', async () => {
+    const r = await svc.similar(cat[0], cat)
     expect(r.ids).toEqual([2])
     expect(r.line).toContain('Frieren')
   })
