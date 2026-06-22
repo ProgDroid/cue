@@ -1,7 +1,15 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useCatalogueStore } from '../catalogue'
 import type { Title } from '@/types'
+
+// The singleton in @/services/index.ts is now ApiAskService (backed by fetch).
+// Swap it back to the deterministic stub so these store-behaviour tests don't
+// need a running server or a fetch mock.
+vi.mock('@/services', async () => {
+  const { StubAskService } = await import('@/services/askService')
+  return { askService: new StubAskService() }
+})
 
 function t(p: Partial<Title>): Title {
   return { id: 0, imdbId: null, title: '', year: 2000, services: ['plex'],

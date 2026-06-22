@@ -52,3 +52,37 @@ export class StubAskService implements AskService {
     return { line: `More like ${title.title}.`, sub: `${ids.length} · refine or filter to narrow`, ids }
   }
 }
+
+function isAskResult(v: unknown): v is AskResult {
+  if (typeof v !== 'object' || v === null) return false
+  const r = v as Record<string, unknown>
+  return Array.isArray(r.ids) && r.ids.every(n => typeof n === 'number')
+    && typeof r.line === 'string' && typeof r.sub === 'string'
+}
+
+async function postAsk(path: string, payload: unknown): Promise<AskResult> {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (res.status === 503) throw new Error('ask is unavailable')
+  if (!res.ok) throw new Error(`ask failed (HTTP ${res.status})`)
+  const data: unknown = await res.json()
+  if (!isAskResult(data)) throw new Error('malformed ask response: missing ids/line/sub')
+  return data
+}
+
+export class ApiAskService implements AskService {
+  ask(query: string, _base: Title[]): Promise<AskResult> {
+    return postAsk('/api/ask', { query })
+  }
+
+  refine(kind: 'lighter' | 'shorter' | 'surprise', current: Title[]): Promise<AskResult> {
+    return postAsk('/api/ask/refine', { kind, ids: current.map(t => t.id) })
+  }
+
+  similar(title: Title, _all: Title[]): Promise<AskResult> {
+    return postAsk('/api/ask/similar', { anchorId: title.id })
+  }
+}
