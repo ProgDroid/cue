@@ -25,6 +25,7 @@ interface State {
   sub: string
   thread: ThreadStep[]
   resolving: boolean
+  askError: string | null
 }
 
 export const useCatalogueStore = defineStore('catalogue', {
@@ -45,6 +46,7 @@ export const useCatalogueStore = defineStore('catalogue', {
     sub: '',
     thread: [],
     resolving: false,
+    askError: null,
   }),
 
   getters: {
@@ -129,22 +131,43 @@ export const useCatalogueStore = defineStore('catalogue', {
     },
 
     async submitAsk(q: string) {
+      this.askError = null
       this.resolving = true
-      try { this.applyResult(q, await askService.ask(q, this.catalogue)) }
-      finally { this.resolving = false }
+      try {
+        this.applyResult(q, await askService.ask(q, this.catalogue))
+      } catch (e) {
+        this.askError = e instanceof Error ? e.message : 'Ask is unavailable right now.'
+        this.answerActive = true
+      } finally {
+        this.resolving = false
+      }
     },
 
     async refine(kind: 'lighter' | 'shorter' | 'surprise') {
       const current = this.resultIds.map(id => this.catalogue.find(t => t.id === id)!).filter(Boolean)
+      this.askError = null
       this.resolving = true
-      try { this.applyResult(`↻ ${kind}`, await askService.refine(kind, current)) }
-      finally { this.resolving = false }
+      try {
+        this.applyResult(`↻ ${kind}`, await askService.refine(kind, current))
+      } catch (e) {
+        this.askError = e instanceof Error ? e.message : 'Ask is unavailable right now.'
+        this.answerActive = true
+      } finally {
+        this.resolving = false
+      }
     },
 
     async moreLike(title: Title) {
+      this.askError = null
       this.resolving = true
-      try { this.applyResult(`≈ ${title.title}`, await askService.similar(title, this.catalogue)) }
-      finally { this.resolving = false }
+      try {
+        this.applyResult(`≈ ${title.title}`, await askService.similar(title, this.catalogue))
+      } catch (e) {
+        this.askError = e instanceof Error ? e.message : 'Ask is unavailable right now.'
+        this.answerActive = true
+      } finally {
+        this.resolving = false
+      }
     },
 
     stepThread(i: number) {
@@ -154,7 +177,7 @@ export const useCatalogueStore = defineStore('catalogue', {
     },
 
     clearThread() {
-      this.answerActive = false; this.resultIds = []; this.line = ''; this.sub = ''; this.thread = []
+      this.answerActive = false; this.resultIds = []; this.line = ''; this.sub = ''; this.thread = []; this.askError = null
     },
   },
 })

@@ -11,6 +11,10 @@ vi.mock('@/services', async () => {
   return { askService: new StubAskService() }
 })
 
+// Import the mocked module so we can spy on the singleton instance's methods.
+// Must be after vi.mock (hoisting means the factory runs before this import).
+const { askService: mockedAskService } = await import('@/services')
+
 function t(p: Partial<Title>): Title {
   return { id: 0, imdbId: null, title: '', year: 2000, services: ['plex'],
     type: 'movie', genres: [], imdb: null, len: '90 min', desc: '',
@@ -54,5 +58,42 @@ describe('store ask actions', () => {
     s.stepThread(0)
     expect(s.thread.length).toBe(1)
     expect(s.resultIds.sort()).toEqual([1, 2])
+  })
+})
+
+describe('store ask error handling (503 / unavailable)', () => {
+  it('submitAsk does not throw when askService rejects, sets askError, resets resolving', async () => {
+    const s = useCatalogueStore(); s.catalogue = cat
+    vi.spyOn(mockedAskService, 'ask').mockRejectedValueOnce(new Error('ask is unavailable'))
+    await expect(s.submitAsk('anything')).resolves.toBeUndefined()
+    expect(s.askError).toBeTruthy()
+    expect(s.resolving).toBe(false)
+  })
+
+  it('submitAsk sets answerActive so the error message is visible', async () => {
+    const s = useCatalogueStore(); s.catalogue = cat
+    vi.spyOn(mockedAskService, 'ask').mockRejectedValueOnce(new Error('ask is unavailable'))
+    await s.submitAsk('anything')
+    expect(s.answerActive).toBe(true)
+    expect(s.askError).toBe('ask is unavailable')
+  })
+
+  it('submitAsk resets askError to null on a successful follow-up call', async () => {
+    const s = useCatalogueStore(); s.catalogue = cat
+    vi.spyOn(mockedAskService, 'ask').mockRejectedValueOnce(new Error('ask is unavailable'))
+    await s.submitAsk('anything')
+    expect(s.askError).toBeTruthy()
+    // Next call succeeds (spy is one-time) — error should clear
+    await s.submitAsk('animation')
+    expect(s.askError).toBeNull()
+  })
+
+  it('clearThread also clears askError', async () => {
+    const s = useCatalogueStore(); s.catalogue = cat
+    vi.spyOn(mockedAskService, 'ask').mockRejectedValueOnce(new Error('ask is unavailable'))
+    await s.submitAsk('anything')
+    s.clearThread()
+    expect(s.askError).toBeNull()
+    expect(s.answerActive).toBe(false)
   })
 })

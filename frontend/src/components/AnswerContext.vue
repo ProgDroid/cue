@@ -10,11 +10,16 @@ const store = useCatalogueStore()
     <div class="answer-left">
       <span class="answer-icon" aria-hidden="true">✦</span>
       <div class="answer-text">
-        <div class="answer-line">{{ store.line }}</div>
-        <div class="answer-sub">{{ store.sub }}</div>
+        <template v-if="store.askError">
+          <div class="answer-line answer-unavailable">{{ store.askError }}</div>
+        </template>
+        <template v-else>
+          <div class="answer-line">{{ store.line }}</div>
+          <div class="answer-sub">{{ store.sub }}</div>
+        </template>
       </div>
     </div>
-    <RefineChips />
+    <RefineChips v-if="!store.askError" />
   </div>
 </template>
 
@@ -66,5 +71,10 @@ const store = useCatalogueStore()
   text-transform: uppercase;
   color: var(--text-faint, #5f6570);
   margin-top: 4px;
+}
+
+.answer-unavailable {
+  color: var(--text-faint, #5f6570);
+  font-style: italic;
 }
 </style>
