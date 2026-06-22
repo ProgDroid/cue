@@ -19,6 +19,15 @@ impl Service {
             _ => None,
         }
     }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Plex => "plex",
+            Self::Disney => "disney",
+            Self::Crunchyroll => "crunchyroll",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -35,6 +44,14 @@ impl TitleKind {
             "movie" => Some(Self::Movie),
             "series" => Some(Self::Series),
             _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Movie => "movie",
+            Self::Series => "series",
         }
     }
 }
@@ -105,5 +122,18 @@ mod tests {
         assert_eq!(Service::parse("crunchyroll"), Some(Service::Crunchyroll));
         assert_eq!(Service::parse("nope"), None);
         assert_eq!(TitleKind::parse("series"), Some(TitleKind::Series));
+    }
+
+    #[test]
+    fn service_as_str_roundtrips_parse() {
+        for s in [Service::Plex, Service::Disney, Service::Crunchyroll] {
+            assert_eq!(Service::parse(s.as_str()), Some(s));
+        }
+    }
+
+    #[test]
+    fn title_kind_as_str_matches_db_values() {
+        assert_eq!(TitleKind::Movie.as_str(), "movie");
+        assert_eq!(TitleKind::Series.as_str(), "series");
     }
 }
