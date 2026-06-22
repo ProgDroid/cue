@@ -4,7 +4,10 @@
 FROM node:22-alpine AS frontend
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
-RUN npm ci
+# `npm install` (not `npm ci`): package-lock.json is generated on Windows and
+# omits Linux/musl optional deps (@emnapi/*, rollup musl bindings), so strict
+# `npm ci` fails here. install resolves the right platform deps at build time.
+RUN npm install --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build            # outputs /app/frontend/dist
 
