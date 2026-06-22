@@ -23,8 +23,13 @@
       />
     </div>
 
-    <!-- Avatar -->
-    <div class="avatar" aria-label="User: FF">FF</div>
+    <!-- Avatar → settings/utility page -->
+    <button
+      type="button"
+      class="avatar"
+      aria-label="Open settings: FF"
+      @click="$router.push('/settings')"
+    >FF</button>
   </header>
 </template>
 
@@ -160,5 +165,8 @@ const query = computed({
   color: var(--text-muted, #aab0bb);
   flex: none;
   user-select: none;
+  cursor: pointer;
+  appearance: none;
+  padding: 0;
 }
 </style>
