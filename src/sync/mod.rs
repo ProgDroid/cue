@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use crate::models::{Service, TitleKind};
 
 pub mod merge;
+pub mod store;
 
 /// A source-agnostic catalogue row emitted by every `CatalogueSource`.
 #[derive(Debug, Clone, PartialEq)]
