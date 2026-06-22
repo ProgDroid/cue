@@ -1,0 +1,10 @@
+{
+  "gb": {
+    "countryCode": "gb",
+    "services": {
+      "disney": { "id": "disney", "name": "Disney+" },
+      "crunchyroll": { "id": "crunchyroll", "name": "Crunchyroll" },
+      "netflix": { "id": "netflix", "name": "Netflix" }
+    }
+  }
+}

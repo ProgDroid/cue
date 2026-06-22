@@ -1,0 +1,18 @@
+{
+  "shows": [
+    {
+      "imdbId": "tt9335498",
+      "title": "Solo Leveling",
+      "overview": "A weak hunter grows strong.",
+      "showType": "series",
+      "firstAirYear": 2024,
+      "genres": [{ "name": "Animation" }, { "name": "Action" }],
+      "cast": ["Taito Ban"],
+      "rating": 84,
+      "seasonCount": 2,
+      "episodeCount": 25
+    }
+  ],
+  "hasMore": false,
+  "nextCursor": null
+}

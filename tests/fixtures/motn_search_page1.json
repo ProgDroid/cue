@@ -1,0 +1,18 @@
+{
+  "shows": [
+    {
+      "imdbId": "tt2380307",
+      "tmdbId": "354912",
+      "title": "Coco",
+      "overview": "A boy enters the Land of the Dead.",
+      "showType": "movie",
+      "releaseYear": 2017,
+      "genres": [{ "name": "Animation" }, { "name": "Family" }],
+      "cast": ["Anthony Gonzalez"],
+      "rating": 82,
+      "runtime": 105
+    }
+  ],
+  "hasMore": true,
+  "nextCursor": "354912:Coco"
+}

@@ -12,6 +12,7 @@ use crate::models::{Service, TitleKind};
 use crate::services::embeddings::{backfill, Embedder};
 
 pub mod merge;
+pub mod motn;
 pub mod plex;
 pub mod store;
 
