@@ -1,6 +1,7 @@
 pub mod catalogue;
 pub mod embeddings;
 pub mod seed;
+pub mod sync_runs;
 
 use std::str::FromStr;
 
