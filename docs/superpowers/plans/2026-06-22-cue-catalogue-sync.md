@@ -1522,6 +1522,7 @@ struct CountryEntry {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Page {
     #[serde(default)]
     shows: Vec<Show>,
@@ -1559,18 +1560,8 @@ struct Named {
 /// # Errors
 /// Returns an error if the JSON does not match the expected shape.
 pub fn parse_page(json: &str, services: &[Service]) -> anyhow::Result<(Vec<FetchedTitle>, Option<String>)> {
-    // serde rename_all="camelCase" maps hasMore/nextCursor automatically.
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct RawPage {
-        #[serde(default)]
-        shows: Vec<Show>,
-        #[serde(default)]
-        has_more: bool,
-        #[serde(default)]
-        next_cursor: Option<String>,
-    }
-    let page: RawPage = serde_json::from_str(json)?;
+    // serde rename_all="camelCase" on `Page` maps hasMore/nextCursor automatically.
+    let page: Page = serde_json::from_str(json)?;
     let titles = page
         .shows
         .into_iter()
@@ -1658,8 +1649,6 @@ impl CatalogueSource for MotnClient {
     }
 }
 ```
-
-> Implementer note: the duplicated `Page`/`RawPage` structs are deliberate to keep the unused-warning-free public `parse_page` self-contained; delete the outer `Page` struct if clippy flags it as dead code, keeping only the inner `RawPage`.
 
 - [ ] **Step 5: Run to verify pass**
 
