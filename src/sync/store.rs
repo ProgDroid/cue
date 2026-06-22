@@ -10,28 +10,31 @@ use crate::sync::merge::MergedTitle;
 /// Find an existing surrogate id by identity (imdb → tmdb → `plex_guid`).
 async fn find_existing(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<Option<i64>> {
     if let Some(imdb) = &t.imdb_id {
-        if let Some(id) = sqlx::query_scalar::<_, i64>("SELECT id FROM titles WHERE imdb_id = ?")
-            .bind(imdb)
-            .fetch_optional(pool)
-            .await?
+        if let Some(id) =
+            sqlx::query_scalar::<_, i64>("SELECT id FROM titles WHERE imdb_id = ? LIMIT 1")
+                .bind(imdb)
+                .fetch_optional(pool)
+                .await?
         {
             return Ok(Some(id));
         }
     }
     if let Some(tmdb) = &t.tmdb_id {
-        if let Some(id) = sqlx::query_scalar::<_, i64>("SELECT id FROM titles WHERE tmdb_id = ?")
-            .bind(tmdb)
-            .fetch_optional(pool)
-            .await?
+        if let Some(id) =
+            sqlx::query_scalar::<_, i64>("SELECT id FROM titles WHERE tmdb_id = ? LIMIT 1")
+                .bind(tmdb)
+                .fetch_optional(pool)
+                .await?
         {
             return Ok(Some(id));
         }
     }
     if let Some(guid) = &t.plex_guid {
-        if let Some(id) = sqlx::query_scalar::<_, i64>("SELECT id FROM titles WHERE plex_guid = ?")
-            .bind(guid)
-            .fetch_optional(pool)
-            .await?
+        if let Some(id) =
+            sqlx::query_scalar::<_, i64>("SELECT id FROM titles WHERE plex_guid = ? LIMIT 1")
+                .bind(guid)
+                .fetch_optional(pool)
+                .await?
         {
             return Ok(Some(id));
         }
@@ -351,5 +354,39 @@ mod tests {
         reconcile_service(&p, Service::Plex, &[]).await.unwrap();
         let removed = prune_orphans(&p).await.unwrap();
         assert_eq!(removed, 0, "Crunchyroll membership keeps the title alive");
+    }
+
+    #[tokio::test]
+    async fn upsert_tolerates_duplicate_tmdb_id() {
+        // Regression: fetch_optional errors when >1 row matches; LIMIT 1 prevents this.
+        let (p, _dir) = pool().await;
+        // Insert two rows sharing the same tmdb_id via raw SQL to bypass upsert dedup.
+        for t in ["A", "B"] {
+            sqlx::query(
+                "INSERT INTO titles (tmdb_id, title, year, type) VALUES (?, ?, 2020, 'movie')",
+            )
+            .bind("555")
+            .bind(t)
+            .execute(&p)
+            .await
+            .unwrap();
+        }
+        let m = MergedTitle {
+            imdb_id: None,
+            tmdb_id: Some("555".into()),
+            plex_guid: None,
+            title: "C".into(),
+            year: 2021,
+            kind: TitleKind::Movie,
+            imdb_rating: None,
+            length: String::new(),
+            description: String::new(),
+            genres: vec![],
+            cast: vec![],
+            services: vec![],
+        };
+        // Must NOT error despite two rows sharing tmdb_id "555".
+        let id = upsert_title(&p, &m).await.unwrap();
+        assert!(id > 0);
     }
 }
