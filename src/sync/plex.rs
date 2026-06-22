@@ -50,6 +50,11 @@ fn guid_value(guids: &[Tagged], scheme: &str) -> Option<String> {
 
 /// Parse one `/library/sections/{key}/all` JSON body into fetched titles.
 ///
+/// Only `movie` and `show` items are kept. Any other top-level `type` is
+/// skipped with a warning rather than silently coerced to a movie — in
+/// practice `fetch()` only feeds movie/show sections, so this guards against
+/// an unexpected section shape rather than a routine case.
+///
 /// # Errors
 /// Returns an error if the JSON does not match the expected shape.
 pub fn parse_section(json: &str) -> anyhow::Result<Vec<FetchedTitle>> {
@@ -58,14 +63,21 @@ pub fn parse_section(json: &str) -> anyhow::Result<Vec<FetchedTitle>> {
         .media_container
         .metadata
         .into_iter()
-        .map(|m| {
-            let kind = if m.kind == "show" {
-                TitleKind::Series
-            } else {
-                TitleKind::Movie
+        .filter_map(|m| {
+            let kind = match m.kind.as_str() {
+                "movie" => TitleKind::Movie,
+                "show" => TitleKind::Series,
+                other => {
+                    tracing::warn!(
+                        "skipping Plex item {:?} with unexpected type {:?}",
+                        m.title,
+                        other
+                    );
+                    return None;
+                }
             };
             let length = m.duration.map(|ms| format!("{} min", ms / 60000));
-            FetchedTitle {
+            Some(FetchedTitle {
                 imdb_id: guid_value(&m.guid, "imdb"),
                 tmdb_id: guid_value(&m.guid, "tmdb"),
                 plex_guid: guid_value(&m.guid, "plex"),
@@ -78,7 +90,7 @@ pub fn parse_section(json: &str) -> anyhow::Result<Vec<FetchedTitle>> {
                 genres: m.genre.into_iter().map(|g| g.tag).collect(),
                 cast: m.role.into_iter().map(|r| r.tag).collect(),
                 services: vec![Service::Plex],
-            }
+            })
         })
         .collect())
 }
@@ -183,5 +195,27 @@ mod tests {
         let show = &out[1];
         assert_eq!(show.kind, TitleKind::Series);
         assert_eq!(show.imdb_id.as_deref(), Some("tt11280740"));
+    }
+
+    #[test]
+    fn skips_items_with_unexpected_type() {
+        // A "movie", a "show", and a stray top-level type (e.g. a collection).
+        // Only the movie and show should survive; the unknown type is dropped
+        // rather than coerced into a Movie.
+        let json = r#"{
+            "MediaContainer": {
+                "Metadata": [
+                    {"type": "movie", "title": "A Film", "year": 2020},
+                    {"type": "collection", "title": "A Collection"},
+                    {"type": "show", "title": "A Series", "year": 2021}
+                ]
+            }
+        }"#;
+        let out = parse_section(json).unwrap();
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].title, "A Film");
+        assert_eq!(out[0].kind, TitleKind::Movie);
+        assert_eq!(out[1].title, "A Series");
+        assert_eq!(out[1].kind, TitleKind::Series);
     }
 }
