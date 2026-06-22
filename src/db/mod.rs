@@ -1,4 +1,5 @@
 pub mod catalogue;
+pub mod embeddings;
 pub mod seed;
 
 use std::str::FromStr;
