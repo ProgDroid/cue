@@ -177,6 +177,40 @@ pub async fn prune_orphans(pool: &SqlitePool) -> anyhow::Result<u64> {
     Ok(res.rows_affected())
 }
 
+/// Delete titles that have no service membership in any of the `touched_services`
+/// (the union of successfully-reconciled and explicitly-failed services for this run).
+///
+/// This is the "scoped prune": titles owned exclusively by protected (failed) services
+/// are preserved; stale titles from services not mentioned in this run are removed.
+/// Returns the number of rows deleted.
+///
+/// # Errors
+/// Returns an error if the query fails.
+pub async fn prune_orphans_scoped(
+    pool: &SqlitePool,
+    touched_services: &[&str],
+) -> anyhow::Result<u64> {
+    if touched_services.is_empty() {
+        return Ok(0);
+    }
+    // Build "?, ?, ..." placeholder string for the IN clause.
+    let placeholders = touched_services
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "DELETE FROM titles WHERE id NOT IN \
+         (SELECT title_id FROM title_services WHERE service IN ({placeholders}))"
+    );
+    let mut q = sqlx::query(&sql);
+    for svc in touched_services {
+        q = q.bind(*svc);
+    }
+    let res = q.execute(pool).await?;
+    Ok(res.rows_affected())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
