@@ -12,6 +12,26 @@ use crate::services::similarity;
 
 const CANDIDATE_CAP: usize = 150;
 
+/// Light-toned genres used as the fallback when no lightness axis/vector exists.
+const LIGHT_GENRES: [&str; 5] = ["Comedy", "Animation", "Adventure", "Romance", "Musical"];
+
+/// "164 min" -> 164; "28 eps" -> eps*24 so series sort sensibly among movies.
+/// Mirrors the frontend stub's `lenMinutes`.
+#[must_use]
+pub fn len_minutes(len: &str) -> i64 {
+    let n: i64 = len
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>()
+        .parse()
+        .unwrap_or(0);
+    if len.to_ascii_lowercase().contains("eps") {
+        n * 24
+    } else {
+        n
+    }
+}
+
 /// Errors the routes translate to HTTP: `Unavailable` -> 503, `Other` -> 500.
 #[derive(Debug, thiserror::Error)]
 pub enum AskError {
@@ -26,7 +46,6 @@ pub struct AskEngine {
     pool: SqlitePool,
     embedder: Option<Arc<dyn Embedder>>,
     model: Option<Arc<dyn AskModel>>,
-    #[allow(dead_code)] // used by the future `similar`/`refine` methods
     light_axis: Option<Vec<f32>>,
 }
 
@@ -77,6 +96,187 @@ impl AskEngine {
         let allowed: HashSet<i64> = candidates.iter().map(|c| c.id).collect();
         answer.ids.retain(|id| allowed.contains(id));
         Ok(answer)
+    }
+
+    /// "More like {title}": cosine over stored vectors, or shared-genre overlap
+    /// when the anchor (or candidates) lack vectors.
+    ///
+    /// # Errors
+    /// Returns `AskError::Other` on database or I/O failure.
+    pub async fn similar(
+        &self,
+        anchor_id: i64,
+        base_ids: Option<Vec<i64>>,
+    ) -> Result<AskAnswer, AskError> {
+        let pool_ids = match base_ids {
+            Some(ids) if !ids.is_empty() => ids,
+            _ => self.all_ids().await?,
+        };
+        let vectors = embeddings::load_all(&self.pool, EMBED_MODEL).await?;
+        let vmap: HashMap<i64, Vec<f32>> = vectors.into_iter().collect();
+
+        let ids = if let Some(anchor) = vmap.get(&anchor_id) {
+            let mut scored: Vec<(i64, f32)> = pool_ids
+                .iter()
+                .filter(|&&id| id != anchor_id)
+                .filter_map(|&id| vmap.get(&id).map(|v| (id, similarity::cosine(anchor, v))))
+                .collect();
+            scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+            scored.into_iter().take(20).map(|(id, _)| id).collect()
+        } else {
+            self.genre_overlap(anchor_id, &pool_ids).await?
+        };
+
+        let title = self.title_name(anchor_id).await?;
+        Ok(AskAnswer {
+            sub: format!("{} · refine or filter to narrow", ids.len()),
+            line: format!("More like {title}."),
+            ids,
+        })
+    }
+
+    /// Deterministic refine chips — no Claude. `shorter` sorts by runtime;
+    /// `lighter` projects onto the lightness axis (or filters light genres);
+    /// `surprise` picks a high-rated outlier (or the highest-rated title).
+    ///
+    /// # Errors
+    /// Returns `AskError::Other` on unknown `kind` or database/I/O failure.
+    pub async fn refine(&self, kind: &str, ids: &[i64]) -> Result<AskAnswer, AskError> {
+        let (line, out): (&str, Vec<i64>) = match kind {
+            "shorter" => ("Shortest first.", self.sort_by_runtime(ids).await?),
+            "lighter" => ("Lighter picks.", self.lighter(ids).await?),
+            "surprise" => ("A wildcard you might've missed.", self.surprise(ids).await?),
+            other => {
+                return Err(AskError::Other(anyhow::anyhow!(
+                    "unknown refine kind: {other}"
+                )))
+            }
+        };
+        Ok(AskAnswer {
+            sub: format!("{} · refine or filter to narrow", out.len()),
+            line: line.to_string(),
+            ids: out,
+        })
+    }
+
+    async fn all_ids(&self) -> anyhow::Result<Vec<i64>> {
+        Ok(sqlx::query_scalar("SELECT id FROM titles ORDER BY id")
+            .fetch_all(&self.pool)
+            .await?)
+    }
+
+    async fn title_name(&self, id: i64) -> anyhow::Result<String> {
+        Ok(sqlx::query_scalar("SELECT title FROM titles WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?
+            .unwrap_or_else(|| "this".to_string()))
+    }
+
+    async fn genre_overlap(&self, anchor_id: i64, pool_ids: &[i64]) -> anyhow::Result<Vec<i64>> {
+        let anchor_genres: Vec<String> =
+            sqlx::query_scalar("SELECT genre FROM title_genres WHERE title_id = ?")
+                .bind(anchor_id)
+                .fetch_all(&self.pool)
+                .await?;
+        let anchor_set: HashSet<String> = anchor_genres.into_iter().collect();
+        let all = sqlx::query_as::<_, (i64, String)>("SELECT title_id, genre FROM title_genres")
+            .fetch_all(&self.pool)
+            .await?;
+        let mut shared: HashMap<i64, i64> = HashMap::new();
+        for (tid, g) in all {
+            if anchor_set.contains(&g) {
+                *shared.entry(tid).or_default() += 1;
+            }
+        }
+        let want: HashSet<i64> = pool_ids.iter().copied().collect();
+        let mut scored: Vec<(i64, i64)> = shared
+            .into_iter()
+            .filter(|(id, _)| *id != anchor_id && want.contains(id))
+            .collect();
+        scored.sort_by_key(|b| std::cmp::Reverse(b.1));
+        Ok(scored.into_iter().take(20).map(|(id, _)| id).collect())
+    }
+
+    async fn sort_by_runtime(&self, ids: &[i64]) -> anyhow::Result<Vec<i64>> {
+        let rows = sqlx::query_as::<_, (i64, String)>("SELECT id, length FROM titles")
+            .fetch_all(&self.pool)
+            .await?;
+        let lens: HashMap<i64, i64> = rows
+            .into_iter()
+            .map(|(id, len)| (id, len_minutes(&len)))
+            .collect();
+        let mut out: Vec<i64> = ids.to_vec();
+        out.sort_by_key(|id| lens.get(id).copied().unwrap_or(0));
+        Ok(out)
+    }
+
+    async fn lighter(&self, ids: &[i64]) -> anyhow::Result<Vec<i64>> {
+        if let Some(axis) = &self.light_axis {
+            let vectors = embeddings::load_all(&self.pool, EMBED_MODEL).await?;
+            let vmap: HashMap<i64, Vec<f32>> = vectors.into_iter().collect();
+            if ids.iter().any(|id| vmap.contains_key(id)) {
+                let mut scored: Vec<(i64, f32)> = ids
+                    .iter()
+                    .filter_map(|id| vmap.get(id).map(|v| (*id, similarity::dot(v, axis))))
+                    .collect();
+                scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+                return Ok(scored.into_iter().map(|(id, _)| id).collect());
+            }
+        }
+        // Fallback: keep ids that have a light-toned genre.
+        let all = sqlx::query_as::<_, (i64, String)>("SELECT title_id, genre FROM title_genres")
+            .fetch_all(&self.pool)
+            .await?;
+        let mut light: HashSet<i64> = HashSet::new();
+        for (tid, g) in all {
+            if LIGHT_GENRES.contains(&g.as_str()) {
+                light.insert(tid);
+            }
+        }
+        Ok(ids
+            .iter()
+            .copied()
+            .filter(|id| light.contains(id))
+            .collect())
+    }
+
+    async fn surprise(&self, ids: &[i64]) -> anyhow::Result<Vec<i64>> {
+        let vectors = embeddings::load_all(&self.pool, EMBED_MODEL).await?;
+        let vmap: HashMap<i64, Vec<f32>> = vectors.into_iter().collect();
+        let ratings = sqlx::query_as::<_, (i64, Option<f64>)>("SELECT id, imdb_rating FROM titles")
+            .fetch_all(&self.pool)
+            .await?;
+        let rmap: HashMap<i64, f64> = ratings
+            .into_iter()
+            .map(|(id, r)| (id, r.unwrap_or(0.0)))
+            .collect();
+
+        // With vectors: farthest from the centroid of the set, weighted by rating.
+        let present: Vec<Vec<f32>> = ids.iter().filter_map(|id| vmap.get(id).cloned()).collect();
+        if !present.is_empty() {
+            let center = similarity::centroid(&present);
+            let pick = ids
+                .iter()
+                .filter_map(|id| vmap.get(id).map(|v| (*id, v)))
+                .max_by(|(ia, va), (ib, vb)| {
+                    // Compute score in f64 to avoid cast_possible_truncation on rmap values.
+                    let da = (1.0 - f64::from(similarity::cosine(va, &center))) + rmap[ia] / 10.0;
+                    let db = (1.0 - f64::from(similarity::cosine(vb, &center))) + rmap[ib] / 10.0;
+                    da.total_cmp(&db)
+                })
+                .map(|(id, _)| id);
+            if let Some(id) = pick {
+                return Ok(vec![id]);
+            }
+        }
+        // Fallback: the highest-rated id in the set.
+        let pick = ids.iter().copied().max_by(|a, b| {
+            rmap.get(a)
+                .unwrap_or(&0.0)
+                .total_cmp(rmap.get(b).unwrap_or(&0.0))
+        });
+        Ok(pick.into_iter().collect())
     }
 
     /// Load compact candidates for the given ids, preserving the input order.
@@ -195,5 +395,67 @@ mod tests {
             engine.ask("cozy", None).await,
             Err(AskError::Unavailable)
         ));
+    }
+
+    #[tokio::test]
+    async fn refine_shorter_orders_by_runtime() {
+        let (pool, _dir) = seeded().await;
+        let engine = AskEngine::new(pool, None, None, None);
+        // Seed ids 1..=3 exist; shorter must return them sorted by ascending length.
+        let answer = engine.refine("shorter", &[1, 2, 3]).await.unwrap();
+        assert_eq!(answer.ids.len(), 3);
+        let mins: Vec<i64> = {
+            let mut v = Vec::new();
+            for id in &answer.ids {
+                let len: String = sqlx::query_scalar("SELECT length FROM titles WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(engine_pool(&engine))
+                    .await
+                    .unwrap();
+                v.push(len_minutes(&len));
+            }
+            v
+        };
+        assert!(mins.windows(2).all(|w| w[0] <= w[1]), "ascending runtime");
+    }
+
+    #[tokio::test]
+    async fn refine_lighter_falls_back_to_light_genres_without_axis() {
+        let (pool, _dir) = seeded().await;
+        let engine = AskEngine::new(pool, None, None, None);
+        let answer = engine.refine("lighter", &[1, 2, 3]).await.unwrap();
+        // Every returned id must have at least one light genre.
+        for id in &answer.ids {
+            let count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM title_genres WHERE title_id = ?
+                 AND genre IN ('Comedy','Animation','Adventure','Romance','Musical')",
+            )
+            .bind(id)
+            .fetch_one(engine_pool(&engine))
+            .await
+            .unwrap();
+            assert!(count > 0, "id {id} kept without a light genre");
+        }
+    }
+
+    #[tokio::test]
+    async fn similar_without_vectors_uses_genre_overlap() {
+        let (pool, _dir) = seeded().await;
+        let engine = AskEngine::new(pool, None, None, None);
+        let answer = engine.similar(1, None).await.unwrap();
+        assert!(!answer.ids.contains(&1), "anchor excluded");
+        assert!(answer.line.contains("More like"));
+    }
+
+    #[test]
+    fn len_minutes_parses_movies_and_series() {
+        assert_eq!(len_minutes("164 min"), 164);
+        assert_eq!(len_minutes("28 eps"), 28 * 24);
+        assert_eq!(len_minutes(""), 0);
+    }
+
+    // Test-only accessor so the assertions above can re-query the pool.
+    fn engine_pool(engine: &AskEngine) -> &SqlitePool {
+        &engine.pool
     }
 }
