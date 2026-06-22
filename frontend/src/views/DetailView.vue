@@ -3,6 +3,7 @@ import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCatalogueStore } from '@/stores/catalogue'
 import ServicePill from '@/components/ServicePill.vue'
+import StarRating from '@/components/StarRating.vue'
 import { posterPlaceholder, monogram } from '@/design/tokens'
 
 const route = useRoute()
@@ -56,7 +57,25 @@ onMounted(() => {
           <div class="poster-motif" :style="{ background: ph.motif }" />
           <div class="poster-mono" :style="{ color: ph.glyphColor }">{{ mono }}</div>
         </div>
-        <!-- Mark-as-watched button + StarRating well are Task 10 — intentionally omitted -->
+        <!-- Writes below are local only — persistence is Plan 5 -->
+
+        <!-- Mark as watched button -->
+        <button
+          class="watched-btn"
+          :class="{ 'watched-btn--active': store.isWatched(id) }"
+          @click="store.toggleWatched(id)"
+        >
+          {{ store.isWatched(id) ? '✓ Watched' : 'Mark as watched' }}
+        </button>
+
+        <!-- Your rating well -->
+        <div class="rating-well">
+          <div class="rating-eyebrow">Your rating</div>
+          <StarRating
+            :value="store.ratingOf(id)"
+            @set="n => store.setRating(id, n)"
+          />
+        </div>
       </div>
 
       <!-- Right: info column -->
@@ -242,6 +261,54 @@ onMounted(() => {
   font-weight: 800;
   font-size: 72px;
   letter-spacing: -0.04em;
+}
+
+/* ---- Mark as watched button ---- */
+.watched-btn {
+  width: 100%;
+  margin-top: 14px;
+  height: 42px;
+  background: var(--watched-bg, #f5c518);
+  border: 1px solid var(--watched-border, #f5c518);
+  border-radius: 9px;
+  color: var(--watched-color, #1a1400);
+  font-family: var(--font-ui, 'Hanken Grotesk', sans-serif);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: opacity 0.16s ease;
+}
+
+.watched-btn:hover {
+  opacity: 0.9;
+}
+
+.watched-btn--active {
+  --watched-bg: rgba(245, 197, 24, 0.14);
+  --watched-border: rgba(245, 197, 24, 0.4);
+  --watched-color: #f5d24e;
+}
+
+/* ---- Rating well ---- */
+.rating-well {
+  margin-top: 14px;
+  padding: 14px;
+  background: #15171c;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+}
+
+.rating-eyebrow {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #5f6570;
+  margin-bottom: 9px;
 }
 
 /* ---- Info column ---- */
