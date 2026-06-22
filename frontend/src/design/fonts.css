@@ -1,0 +1,19 @@
+/* Hanken Grotesk — weights used by the design system (400–800) */
+@import '@fontsource/hanken-grotesk/400.css';
+@import '@fontsource/hanken-grotesk/500.css';
+@import '@fontsource/hanken-grotesk/600.css';
+@import '@fontsource/hanken-grotesk/700.css';
+@import '@fontsource/hanken-grotesk/800.css';
+
+/* JetBrains Mono — weights used by the design system (400–600) */
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+@import '@fontsource/jetbrains-mono/600.css';
+
+/* Base app styles — consume the design tokens */
+body {
+  font-family: var(--font-ui);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  margin: 0;
+}
