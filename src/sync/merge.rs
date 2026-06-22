@@ -1,6 +1,9 @@
 //! Pure merge logic: genre normalization + dedup/union of fetched titles.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
+
+use crate::models::{Service, TitleKind};
+use crate::sync::FetchedTitle;
 
 /// Map one raw genre to its normalized form (lowercased, trimmed, aliased).
 fn normalize_one(raw: &str) -> String {
@@ -26,9 +29,127 @@ pub fn normalize_genres(raws: &[String]) -> Vec<String> {
     set.into_iter().collect()
 }
 
+/// A deduplicated title ready for DB upsert (genres already normalized).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MergedTitle {
+    pub imdb_id: Option<String>,
+    pub tmdb_id: Option<String>,
+    pub plex_guid: Option<String>,
+    pub title: String,
+    pub year: i64,
+    pub kind: TitleKind,
+    pub imdb_rating: Option<f64>,
+    pub length: String,
+    pub description: String,
+    pub genres: Vec<String>,
+    pub cast: Vec<String>,
+    pub services: Vec<Service>,
+}
+
+/// Stable identity key (D6): `IMDb` id, else `plex:<guid>`, else `tmdb:<id>`,
+/// else a `title:<lower>:<year>` fallback.
+#[must_use]
+pub fn identity_key(
+    imdb: Option<&str>,
+    plex_guid: Option<&str>,
+    tmdb: Option<&str>,
+    title: &str,
+    year: i64,
+) -> String {
+    if let Some(i) = imdb {
+        return i.to_string();
+    }
+    if let Some(g) = plex_guid {
+        return format!("plex:{g}");
+    }
+    if let Some(m) = tmdb {
+        return format!("tmdb:{m}");
+    }
+    format!("title:{}:{year}", title.to_lowercase())
+}
+
+/// Dedup fetched rows by identity, unioning services/genres/cast and filling
+/// missing scalar fields from whichever row first provides them.
+///
+/// # Panics
+/// Panics if a key in `order` is not found in `by_key` (invariant bug).
+#[must_use]
+pub fn merge(fetched: Vec<FetchedTitle>) -> Vec<MergedTitle> {
+    let mut order: Vec<String> = Vec::new();
+    let mut by_key: HashMap<String, MergedTitle> = HashMap::new();
+    // Accumulate raw (un-normalized) genres per key, normalize once at the end.
+    let mut raw_genres: HashMap<String, Vec<String>> = HashMap::new();
+
+    for f in fetched {
+        let key = identity_key(
+            f.imdb_id.as_deref(),
+            f.plex_guid.as_deref(),
+            f.tmdb_id.as_deref(),
+            &f.title,
+            f.year.unwrap_or(0),
+        );
+        raw_genres
+            .entry(key.clone())
+            .or_default()
+            .extend(f.genres.clone());
+        if let Some(existing) = by_key.get_mut(&key) {
+            for s in f.services {
+                if !existing.services.contains(&s) {
+                    existing.services.push(s);
+                }
+            }
+            for c in f.cast {
+                if !existing.cast.contains(&c) {
+                    existing.cast.push(c);
+                }
+            }
+            existing.imdb_id = existing.imdb_id.take().or(f.imdb_id);
+            existing.tmdb_id = existing.tmdb_id.take().or(f.tmdb_id);
+            existing.plex_guid = existing.plex_guid.take().or(f.plex_guid);
+            existing.imdb_rating = existing.imdb_rating.or(f.imdb_rating);
+            if existing.description.is_empty() {
+                existing.description = f.description.unwrap_or_default();
+            }
+            if existing.length.is_empty() {
+                existing.length = f.length.unwrap_or_default();
+            }
+        } else {
+            order.push(key.clone());
+            by_key.insert(
+                key,
+                MergedTitle {
+                    imdb_id: f.imdb_id,
+                    tmdb_id: f.tmdb_id,
+                    plex_guid: f.plex_guid,
+                    title: f.title,
+                    year: f.year.unwrap_or(0),
+                    kind: f.kind,
+                    imdb_rating: f.imdb_rating,
+                    length: f.length.unwrap_or_default(),
+                    description: f.description.unwrap_or_default(),
+                    genres: Vec::new(),
+                    cast: f.cast,
+                    services: f.services,
+                },
+            );
+        }
+    }
+
+    order
+        .into_iter()
+        .map(|key| {
+            let mut m = by_key.remove(&key).expect("key present");
+            m.genres = normalize_genres(&raw_genres.remove(&key).unwrap_or_default());
+            m
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{Service, TitleKind};
+    use crate::sync::FetchedTitle;
 
     #[test]
     fn normalize_lowercases_trims_dedups_sorts() {
@@ -46,5 +167,83 @@ mod tests {
     fn normalize_drops_empty() {
         let out = normalize_genres(&[String::new(), "   ".into(), "Comedy".into()]);
         assert_eq!(out, vec!["comedy".to_string()]);
+    }
+
+    #[test]
+    fn identity_prefers_imdb_then_plex_then_tmdb_then_title() {
+        assert_eq!(
+            identity_key(Some("tt9"), Some("g"), Some("5"), "X", 2000),
+            "tt9"
+        );
+        assert_eq!(
+            identity_key(None, Some("g"), Some("5"), "X", 2000),
+            "plex:g"
+        );
+        assert_eq!(identity_key(None, None, Some("5"), "X", 2000), "tmdb:5");
+        assert_eq!(
+            identity_key(None, None, None, "The Film", 2000),
+            "title:the film:2000"
+        );
+    }
+
+    #[test]
+    fn merge_unions_services_and_genres_for_same_imdb() {
+        let a = ft(
+            Some("tt1"),
+            TitleKind::Movie,
+            vec!["Action".into()],
+            vec![Service::Plex],
+        );
+        let b = ft(
+            Some("tt1"),
+            TitleKind::Movie,
+            vec!["action".into(), "Drama".into()],
+            vec![Service::Disney],
+        );
+        let out = merge(vec![a, b]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].services, vec![Service::Plex, Service::Disney]);
+        assert_eq!(
+            out[0].genres,
+            vec!["action".to_string(), "drama".to_string()]
+        );
+    }
+
+    #[test]
+    fn merge_keeps_distinct_titles_in_first_seen_order() {
+        let a = ft(Some("tt1"), TitleKind::Movie, vec![], vec![Service::Plex]);
+        let b = ft(
+            Some("tt2"),
+            TitleKind::Series,
+            vec![],
+            vec![Service::Crunchyroll],
+        );
+        let out = merge(vec![a, b]);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].imdb_id.as_deref(), Some("tt1"));
+        assert_eq!(out[1].imdb_id.as_deref(), Some("tt2"));
+    }
+
+    // test helper
+    fn ft(
+        imdb: Option<&str>,
+        kind: TitleKind,
+        genres: Vec<String>,
+        services: Vec<Service>,
+    ) -> FetchedTitle {
+        FetchedTitle {
+            imdb_id: imdb.map(str::to_string),
+            tmdb_id: None,
+            plex_guid: None,
+            title: "T".into(),
+            year: Some(2001),
+            kind,
+            imdb_rating: None,
+            length: None,
+            description: None,
+            genres,
+            cast: vec![],
+            services,
+        }
     }
 }
