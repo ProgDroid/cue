@@ -7,6 +7,25 @@ import type { Title } from '@/types'
 
 beforeEach(() => setActivePinia(createPinia()))
 
+/** Minimal but fully-shaped Title stub — satisfies all store getters. */
+function t(id: number): Title {
+  return {
+    id,
+    imdbId: null,
+    title: '',
+    year: 2000,
+    services: ['plex'],
+    type: 'movie',
+    genres: [],
+    imdb: null,
+    len: '',
+    desc: '',
+    cast: [],
+    watched: false,
+    rating: null,
+  }
+}
+
 describe('FilterBar', () => {
   it('clicking Plex sets store.service and marks the button active', async () => {
     const w = mount(FilterBar)
@@ -18,7 +37,7 @@ describe('FilterBar', () => {
 
   it('shows the result count from visibleTitles', () => {
     const s = useCatalogueStore()
-    s.catalogue = [{ id: 1 } as Title, { id: 2 } as Title]
+    s.catalogue = [t(1), t(2)]
     const w = mount(FilterBar)
     expect(w.get('[data-test="count"]').text()).toMatch(/2 titles/)
   })

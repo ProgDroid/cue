@@ -31,15 +31,11 @@ const sortOptions = [
   { value: 'az' as const, label: 'A–Z' },
 ]
 
-// Genre options derived from store (guard: catalogue stubs in tests may lack genres array)
-const genreOptions = computed(() => {
-  let storeGenres: string[] = []
-  try { storeGenres = store.genres } catch { storeGenres = [] }
-  return [
-    { value: 'all', label: 'All genres' },
-    ...storeGenres.map(g => ({ value: g, label: g })),
-  ]
-})
+// Genre options derived from store
+const genreOptions = computed(() => [
+  { value: 'all', label: 'All genres' },
+  ...store.genres.map(g => ({ value: g, label: g })),
+])
 
 // Two-way bindings for selects
 const selectedGenre = computed({
