@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useCatalogueStore } from '@/stores/catalogue'
 import AskBar from '@/components/AskBar.vue'
@@ -8,22 +8,25 @@ import FilterBar from '@/components/FilterBar.vue'
 import PosterGrid from '@/components/PosterGrid.vue'
 import AnswerContext from '@/components/AnswerContext.vue'
 import ShimmerGrid from '@/components/ShimmerGrid.vue'
-import type { Title } from '@/types'
 
 const store = useCatalogueStore()
 const router = useRouter()
 
+function onKey(e: KeyboardEvent) {
+  const typing = e.target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)
+  if (e.key === '/' && !typing) { e.preventDefault(); document.querySelector<HTMLInputElement>('[data-test="ask-input"]')?.focus() }
+  else if (e.key === 'Escape') { if (store.answerActive) store.clearThread(); else (document.activeElement as HTMLElement | null)?.blur() }
+}
+
 onMounted(() => {
   if (store.status === 'idle') store.load()
+  document.addEventListener('keydown', onKey)
 })
+
+onUnmounted(() => document.removeEventListener('keydown', onKey))
 
 function openDetail(id: number) {
   void router.push(`/title/${id}`)
-}
-
-// find-similar wired in Task 15
-function onFindSimilar(_t: Title) {
-  // no-op until Task 15
 }
 
 const emptyCopy = computed(() =>
@@ -50,7 +53,7 @@ const emptyCopy = computed(() =>
         v-if="store.visibleTitles.length > 0"
         :titles="store.visibleTitles"
         @select="openDetail"
-        @find-similar="onFindSimilar"
+        @find-similar="store.moreLike"
       />
 
       <div v-else class="empty-state">
