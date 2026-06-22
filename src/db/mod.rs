@@ -4,11 +4,21 @@ pub mod seed;
 pub mod sync_runs;
 
 use std::str::FromStr;
+use std::time::Duration;
 
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqliteSynchronous};
 
 /// Open the `SQLite` pool (creating the file if missing), enforce foreign keys,
 /// and run embedded migrations.
+///
+/// Uses WAL journaling so a long-running catalogue sync (many write
+/// transactions + embedding round-trips) does not block concurrent reads —
+/// e.g. the settings page polling `/api/sync/status`. Without WAL the default
+/// rollback journal makes a writer block all readers, which surfaced as
+/// `database is locked` (`SQLITE_BUSY`) on the status endpoint during a sync.
+/// `synchronous = NORMAL` is the standard, durable-enough companion to WAL, and
+/// a generous `busy_timeout` lets the rare writer-vs-writer wait resolve instead
+/// of erroring immediately.
 ///
 /// # Errors
 /// Returns an error if the URL cannot be parsed, the database cannot be opened,
@@ -16,7 +26,10 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
 pub async fn init_pool(database_url: &str) -> anyhow::Result<SqlitePool> {
     let opts = SqliteConnectOptions::from_str(database_url)?
         .create_if_missing(true)
-        .foreign_keys(true);
+        .foreign_keys(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal)
+        .busy_timeout(Duration::from_secs(15));
     let pool = SqlitePool::connect_with(opts).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
     Ok(pool)
@@ -84,5 +97,21 @@ mod tests {
             orphan.is_err(),
             "inserting a title_genres row with no parent title should violate the FK"
         );
+    }
+
+    #[tokio::test]
+    async fn wal_mode_is_enabled() {
+        // WAL lets readers (status polling) proceed while a sync writes; the
+        // default rollback journal would block them and surface SQLITE_BUSY.
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("test.db");
+        let url = format!("sqlite:{}", db.to_string_lossy().replace('\\', "/"));
+        let pool = init_pool(&url).await.unwrap();
+
+        let mode: String = sqlx::query_scalar("PRAGMA journal_mode")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(mode.to_lowercase(), "wal", "pool should open in WAL mode");
     }
 }
