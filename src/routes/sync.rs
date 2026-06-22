@@ -31,14 +31,12 @@ fn overall(sources: &[SourceRun]) -> Option<LastRun> {
     if sources.is_empty() {
         return None;
     }
-    let any_err = sources.iter().any(|s| s.status == "error");
-    let any_ok = sources.iter().any(|s| s.status == "ok");
-    let status = if any_err && any_ok {
-        "partial"
-    } else if any_err {
+    let status = if sources.iter().all(|s| s.status == "ok") {
+        "ok"
+    } else if sources.iter().all(|s| s.status == "error") {
         "error"
     } else {
-        "ok"
+        "partial"
     };
     let item_count = sources.iter().map(|s| s.item_count).sum();
     let finished_at = sources.iter().filter_map(|s| s.last_run.clone()).max();
@@ -135,5 +133,53 @@ mod tests {
         let req = test::TestRequest::post().uri("/api/sync").to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status().as_u16(), 202);
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["started"], true);
+    }
+
+    mod overall_tests {
+        use super::super::{overall, SourceRun};
+
+        fn sr(status: &str, count: i64) -> SourceRun {
+            SourceRun {
+                source: "x".into(),
+                last_run: Some("2026-06-22".into()),
+                status: status.into(),
+                item_count: count,
+            }
+        }
+
+        #[test]
+        fn overall_none_when_empty() {
+            assert!(overall(&[]).is_none());
+        }
+
+        #[test]
+        fn overall_all_ok_sums_counts() {
+            let r = overall(&[sr("ok", 3), sr("ok", 2)]).unwrap();
+            assert_eq!(r.status, "ok");
+            assert_eq!(r.item_count, 5);
+        }
+
+        #[test]
+        fn overall_all_error() {
+            assert_eq!(
+                overall(&[sr("error", 0), sr("error", 0)]).unwrap().status,
+                "error"
+            );
+        }
+
+        #[test]
+        fn overall_mixed_is_partial() {
+            assert_eq!(
+                overall(&[sr("ok", 3), sr("error", 0)]).unwrap().status,
+                "partial"
+            );
+        }
+
+        #[test]
+        fn overall_unknown_status_is_partial() {
+            assert_eq!(overall(&[sr("running", 0)]).unwrap().status, "partial");
+        }
     }
 }
