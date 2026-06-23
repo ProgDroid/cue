@@ -4,8 +4,10 @@ use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use serde::Deserialize;
+use sqlx::SqlitePool;
 
 use crate::db::motn_cache::CachedTitle;
+use crate::db::{motn_cache, sync_runs};
 use crate::models::{Service, TitleKind};
 use crate::sync::{CatalogueSource, FetchedTitle};
 
@@ -277,6 +279,54 @@ pub fn parse_changes(
     Ok((out, cursor))
 }
 
+/// Safety overlap subtracted from the `from` timestamp so a change straddling the
+/// previous run's boundary is never missed. Idempotent: re-applying a `new`/`removed`
+/// for the same `showId` is a no-op.
+#[allow(dead_code)] // consumed by fetch() in the incremental-sync loop (Task 5)
+const CHANGES_OVERLAP_SECS: i64 = 6 * 3600;
+
+/// Which fetch strategy this run uses.
+#[allow(dead_code)] // consumed by fetch() in the incremental-sync loop (Task 5)
+enum SyncMode {
+    /// Full pagination of `/shows/search/filters`, replacing the whole cache.
+    Seed,
+    /// `/changes` since `from` (Unix seconds), applied to the existing cache.
+    Delta { from: i64 },
+}
+
+/// Decide between a full seed and an incremental delta:
+/// - empty cache (fresh install) → `Seed`
+/// - no successful MOTN run within 25 days (gap exceeds the 31-day window) → `Seed`
+/// - otherwise → `Delta` from the last-ok timestamp minus the overlap buffer.
+///
+/// # Errors
+/// Returns an error if any database query fails.
+#[allow(dead_code)] // consumed by fetch() in the incremental-sync loop (Task 5)
+async fn decide_mode(pool: &SqlitePool) -> anyhow::Result<SyncMode> {
+    if motn_cache::count(pool).await? == 0 || !sync_runs::motn_recent_ok(pool).await? {
+        return Ok(SyncMode::Seed);
+    }
+    let last_ok = sync_runs::last_ok_unix(pool).await?.unwrap_or(0);
+    Ok(SyncMode::Delta {
+        from: last_ok.saturating_sub(CHANGES_OVERLAP_SECS).max(0),
+    })
+}
+
+/// Apply parsed `/changes` to the cache: upsert additions, delete removals.
+///
+/// # Errors
+/// Returns an error if any cache write fails.
+#[allow(dead_code)] // consumed by fetch() in the incremental-sync loop (Task 5)
+async fn apply_changes(pool: &SqlitePool, parsed: &ParsedChanges) -> anyhow::Result<()> {
+    for (show_id, ct) in &parsed.additions {
+        motn_cache::upsert(pool, show_id, ct).await?;
+    }
+    for show_id in &parsed.removals {
+        motn_cache::delete(pool, show_id).await?;
+    }
+    Ok(())
+}
+
 /// The MOTN catalog id for a wanted service (`Disney` → "disney", etc.).
 fn wanted_id(svc: Service) -> Option<&'static str> {
     WANTED.iter().find(|(s, _)| *s == svc).map(|(_, id)| *id)
@@ -490,5 +540,83 @@ mod tests {
         let json = r#"{"changes":[],"shows":{},"hasMore":true,"nextCursor":"abc"}"#;
         let (_, cursor) = parse_changes(json, "gb", &[Service::Disney]).unwrap();
         assert_eq!(cursor, Some("abc".to_string()));
+    }
+
+    use crate::db::{init_pool, motn_cache, sync_runs};
+
+    async fn test_pool() -> (tempfile::TempDir, sqlx::SqlitePool) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        let url = format!("sqlite:{}", path.to_string_lossy().replace('\\', "/"));
+        let pool = init_pool(&url).await.unwrap();
+        (dir, pool)
+    }
+
+    fn cached(title: &str) -> CachedTitle {
+        CachedTitle {
+            imdb_id: Some(format!("tt-{title}")),
+            tmdb_id: None,
+            title: title.to_string(),
+            year: None,
+            kind: "movie".into(),
+            imdb_rating: None,
+            length: None,
+            description: None,
+            genres: vec![],
+            cast: vec![],
+            services: vec!["disney".into()],
+        }
+    }
+
+    #[tokio::test]
+    async fn decide_mode_seeds_on_empty_cache() {
+        let (_dir, pool) = test_pool().await;
+        assert!(matches!(decide_mode(&pool).await.unwrap(), SyncMode::Seed));
+    }
+
+    #[tokio::test]
+    async fn decide_mode_seeds_when_no_recent_ok_run() {
+        let (_dir, pool) = test_pool().await;
+        motn_cache::upsert(&pool, "1", &cached("A")).await.unwrap();
+        // Cache non-empty but no ok run within 25 days -> Seed (recovery re-seed).
+        assert!(matches!(decide_mode(&pool).await.unwrap(), SyncMode::Seed));
+    }
+
+    #[tokio::test]
+    async fn decide_mode_deltas_when_cache_and_recent_ok() {
+        let (_dir, pool) = test_pool().await;
+        motn_cache::upsert(&pool, "1", &cached("A")).await.unwrap();
+        sync_runs::record(&pool, "disney", "ok", 1, None)
+            .await
+            .unwrap();
+        match decide_mode(&pool).await.unwrap() {
+            SyncMode::Delta { from } => assert!(from > 0),
+            SyncMode::Seed => panic!("expected delta"),
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_changes_adds_and_removes() {
+        let (_dir, pool) = test_pool().await;
+        motn_cache::upsert(&pool, "keep", &cached("Keep"))
+            .await
+            .unwrap();
+        motn_cache::upsert(&pool, "drop", &cached("Drop"))
+            .await
+            .unwrap();
+        let parsed = ParsedChanges {
+            additions: vec![("new1".to_string(), cached("New"))],
+            removals: vec!["drop".to_string()],
+        };
+        apply_changes(&pool, &parsed).await.unwrap();
+        let titles: Vec<String> = motn_cache::load_all(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|t| t.title)
+            .collect();
+        assert!(titles.contains(&"Keep".to_string()));
+        assert!(titles.contains(&"New".to_string()));
+        assert!(!titles.contains(&"Drop".to_string()));
     }
 }
