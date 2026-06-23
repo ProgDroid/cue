@@ -2,6 +2,7 @@ pub mod catalogue;
 pub mod embeddings;
 pub mod seed;
 pub mod sync_runs;
+pub mod user_data;
 
 use std::str::FromStr;
 use std::time::Duration;
