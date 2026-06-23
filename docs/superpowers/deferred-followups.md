@@ -82,9 +82,23 @@ live but still working acceptably:
   registers via plain `cfg.route()` so it wouldn't catch loss of the
   production `PayloadConfig`; `invalid_utf8` branch untested;
   `looks_like_iso_date` accepts impossible dates (e.g. `2021-02-31`).
-- **Plex watch-history import** → `watch_history` (schema ready — master spec
-  §11). When built, note that manual un-watch deletes only `source='manual'`
-  rows (D5.2), so imported `plex` rows are preserved.
+- ✅ **Plex watch-history import — DONE & merged 2026-06-23** (branch
+  `feat/plex-watch-history-import`). Folded into catalogue sync: new default-empty
+  `CatalogueSource::fetch_watch_history()` + `watch_history_source()` tag gate
+  (Plex → `Some("plex")`); `run_sync` applies `db::user_data::replace_watch_history`
+  per successful tagged source (replace-by-source; skipped on source failure or
+  tag-less source, so a Plex outage / MOTN never wipes plex rows). Movie watched =
+  `viewCount>0`, series = `viewedLeafCount>0`; `imdb_id` keying (no-imdb skipped);
+  `lastViewedAt` epoch→ISO; manual rows preserved (D5.2). Frontend reloads the
+  catalogue when a sync completes so watched flags surface. See spec
+  `docs/superpowers/specs/2026-06-23-cue-plex-watch-history-import-design.md` and
+  plan `docs/superpowers/plans/2026-06-23-plex-watch-history-import.md`.
+- **Plex watch-history import — live-verify (post-merge):** confirm the real Plex
+  `/library/sections/{key}/all` field names (`viewCount`, `lastViewedAt`,
+  `viewedLeafCount`) against a live server and capture a `parse_watch_history`
+  fixture from real data; run one sync against a real Plex library and confirm
+  watched titles light up in grid/detail after the post-sync catalogue refresh,
+  and that un-watching in Plex clears the cue flag on the next sync.
 - **"Not on your services" discovery row** — open recommendations on the
   retrieval backbone (master spec §11).
 - **Auth (token/login)** — no-op middleware slot reserved (D7); single-user /
