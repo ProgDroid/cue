@@ -226,7 +226,6 @@ pub struct ParsedChanges {
 }
 
 impl ParsedChanges {
-    #[allow(dead_code)] // used by fetch() in the delta loop (Task 5)
     fn merge(&mut self, mut other: Self) {
         self.additions.append(&mut other.additions);
         self.removals.append(&mut other.removals);
@@ -282,11 +281,9 @@ pub fn parse_changes(
 /// Safety overlap subtracted from the `from` timestamp so a change straddling the
 /// previous run's boundary is never missed. Idempotent: re-applying a `new`/`removed`
 /// for the same `showId` is a no-op.
-#[allow(dead_code)] // consumed by fetch() in the incremental-sync loop (Task 5)
 const CHANGES_OVERLAP_SECS: i64 = 6 * 3600;
 
 /// Which fetch strategy this run uses.
-#[allow(dead_code)] // consumed by fetch() in the incremental-sync loop (Task 5)
 enum SyncMode {
     /// Full pagination of `/shows/search/filters`, replacing the whole cache.
     Seed,
@@ -301,7 +298,6 @@ enum SyncMode {
 ///
 /// # Errors
 /// Returns an error if any database query fails.
-#[allow(dead_code)] // consumed by fetch() in the incremental-sync loop (Task 5)
 async fn decide_mode(pool: &SqlitePool) -> anyhow::Result<SyncMode> {
     if motn_cache::count(pool).await? == 0 || !sync_runs::motn_recent_ok(pool).await? {
         return Ok(SyncMode::Seed);
@@ -316,7 +312,6 @@ async fn decide_mode(pool: &SqlitePool) -> anyhow::Result<SyncMode> {
 ///
 /// # Errors
 /// Returns an error if any cache write fails.
-#[allow(dead_code)] // consumed by fetch() in the incremental-sync loop (Task 5)
 async fn apply_changes(pool: &SqlitePool, parsed: &ParsedChanges) -> anyhow::Result<()> {
     for (show_id, ct) in &parsed.additions {
         motn_cache::upsert(pool, show_id, ct).await?;
@@ -337,30 +332,26 @@ pub struct MotnClient {
     client: reqwest::Client,
     api_key: String,
     country: String,
+    pool: SqlitePool,
 }
 
 impl MotnClient {
     #[must_use]
-    pub fn new(api_key: String, country: String) -> Self {
+    pub fn new(api_key: String, country: String, pool: SqlitePool) -> Self {
         Self {
             client: reqwest::Client::new(),
             api_key,
             country,
+            pool,
         }
     }
-}
 
-#[async_trait]
-impl CatalogueSource for MotnClient {
-    fn name(&self) -> &'static str {
-        "motn"
-    }
-
-    fn services(&self) -> &'static [Service] {
-        &[Service::Disney, Service::Crunchyroll]
-    }
-
-    async fn fetch(&self) -> anyhow::Result<Vec<FetchedTitle>> {
+    /// Resolve `(catalogs_csv, services)` from `/countries`, or `None` if this
+    /// country lists none of the wanted services.
+    ///
+    /// # Errors
+    /// Returns an error if the HTTP request fails or the response cannot be read.
+    async fn resolve_catalogs(&self) -> anyhow::Result<Option<(String, Vec<Service>)>> {
         let countries = self
             .client
             .get(format!("{MOTN_BASE}/countries"))
@@ -376,35 +367,130 @@ impl CatalogueSource for MotnClient {
                 "MOTN lists none of [disney, crunchyroll] for {}",
                 self.country
             );
-            return Ok(Vec::new());
+            return Ok(None);
         }
-        let catalog_ids: Vec<String> = resolved.iter().map(|(_, id)| id.clone()).collect();
-        let services: Vec<Service> = resolved.iter().map(|(s, _)| *s).collect();
-        let catalogs = catalog_ids.join(",");
+        let catalogs = resolved
+            .iter()
+            .map(|(_, id)| id.clone())
+            .collect::<Vec<_>>()
+            .join(",");
+        let services = resolved.iter().map(|(s, _)| *s).collect();
+        Ok(Some((catalogs, services)))
+    }
 
-        let mut out = Vec::new();
+    /// Full pagination of `/shows/search/filters` → `(show_id, CachedTitle)` entries.
+    ///
+    /// # Errors
+    /// Returns an error if any HTTP request fails or any page cannot be parsed.
+    async fn seed_pages(
+        &self,
+        catalogs: &str,
+        services: &[Service],
+    ) -> anyhow::Result<Vec<(String, CachedTitle)>> {
+        let mut out: Vec<(String, CachedTitle)> = Vec::new();
         let mut cursor: Option<String> = None;
         loop {
             let mut req = self
                 .client
                 .get(format!("{MOTN_BASE}/shows/search/filters"))
                 .header("X-API-Key", &self.api_key)
-                .query(&[
-                    ("country", self.country.as_str()),
-                    ("catalogs", catalogs.as_str()),
-                ]);
+                .query(&[("country", self.country.as_str()), ("catalogs", catalogs)]);
             if let Some(c) = &cursor {
                 req = req.query(&[("cursor", c.as_str())]);
             }
             let body = req.send().await?.error_for_status()?.text().await?;
-            let (mut titles, next) = parse_page(&body, &self.country, &services)?;
-            out.append(&mut titles);
+            let (entries, next) = parse_page_entries(&body, &self.country, services)?;
+            for (id, ft) in entries {
+                out.push((id, CachedTitle::from(&ft)));
+            }
             match next {
                 Some(c) => cursor = Some(c),
                 None => break,
             }
         }
         Ok(out)
+    }
+
+    /// Paginate `/changes` for one `change_type` since `from` (Unix seconds).
+    ///
+    /// # Errors
+    /// Returns an error if any HTTP request fails or any page cannot be parsed.
+    async fn changes_pages(
+        &self,
+        catalogs: &str,
+        services: &[Service],
+        change_type: &str,
+        from: i64,
+    ) -> anyhow::Result<ParsedChanges> {
+        let mut out = ParsedChanges::default();
+        let from_str = from.to_string();
+        let mut cursor: Option<String> = None;
+        loop {
+            let mut req = self
+                .client
+                .get(format!("{MOTN_BASE}/changes"))
+                .header("X-API-Key", &self.api_key)
+                .query(&[
+                    ("country", self.country.as_str()),
+                    ("catalogs", catalogs),
+                    ("item_type", "show"),
+                    ("change_type", change_type),
+                    ("from", from_str.as_str()),
+                ]);
+            if let Some(c) = &cursor {
+                req = req.query(&[("cursor", c.as_str())]);
+            }
+            let body = req.send().await?.error_for_status()?.text().await?;
+            let (parsed, next) = parse_changes(&body, &self.country, services)?;
+            out.merge(parsed);
+            match next {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
+        }
+        Ok(out)
+    }
+}
+
+#[async_trait]
+impl CatalogueSource for MotnClient {
+    fn name(&self) -> &'static str {
+        "motn"
+    }
+
+    fn services(&self) -> &'static [Service] {
+        &[Service::Disney, Service::Crunchyroll]
+    }
+
+    async fn fetch(&self) -> anyhow::Result<Vec<FetchedTitle>> {
+        let Some((catalogs, services)) = self.resolve_catalogs().await? else {
+            return Ok(Vec::new()); // none of [disney, crunchyroll] in this country
+        };
+
+        match decide_mode(&self.pool).await? {
+            SyncMode::Seed => {
+                let entries = self.seed_pages(&catalogs, &services).await?;
+                tracing::info!("MOTN full seed: {} shows", entries.len());
+                motn_cache::replace_all(&self.pool, &entries).await?;
+            }
+            SyncMode::Delta { from } => {
+                let mut parsed = ParsedChanges::default();
+                for change_type in ["new", "removed"] {
+                    let page = self
+                        .changes_pages(&catalogs, &services, change_type, from)
+                        .await?;
+                    parsed.merge(page);
+                }
+                tracing::info!(
+                    "MOTN delta: +{} -{}",
+                    parsed.additions.len(),
+                    parsed.removals.len()
+                );
+                apply_changes(&self.pool, &parsed).await?;
+            }
+        }
+
+        motn_cache::load_all(&self.pool).await
     }
 }
 
