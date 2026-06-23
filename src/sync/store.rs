@@ -241,6 +241,8 @@ mod tests {
             genres: genres.iter().map(|s| (*s).to_string()).collect(),
             cast: vec!["Actor".into()],
             services: services.to_vec(),
+            poster: None,
+            backdrop: None,
         }
     }
 
@@ -384,6 +386,8 @@ mod tests {
             genres: vec![],
             cast: vec![],
             services: vec![],
+            poster: None,
+            backdrop: None,
         };
         // Must NOT error despite two rows sharing tmdb_id "555".
         let id = upsert_title(&p, &m).await.unwrap();

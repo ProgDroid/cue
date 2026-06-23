@@ -90,6 +90,8 @@ pub fn parse_section(json: &str) -> anyhow::Result<Vec<FetchedTitle>> {
                 genres: m.genre.into_iter().map(|g| g.tag).collect(),
                 cast: m.role.into_iter().map(|r| r.tag).collect(),
                 services: vec![Service::Plex],
+                poster: None,
+                backdrop: None,
             })
         })
         .collect())

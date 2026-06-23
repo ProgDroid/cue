@@ -66,6 +66,8 @@ impl CachedTitle {
                 .iter()
                 .filter_map(|s| Service::parse(s))
                 .collect(),
+            poster: None,
+            backdrop: None,
         }
     }
 }
@@ -180,6 +182,8 @@ mod tests {
             genres: vec!["drama".into()],
             cast: vec!["A".into(), "B".into()],
             services: vec![Service::Disney],
+            poster: None,
+            backdrop: None,
         }
     }
 

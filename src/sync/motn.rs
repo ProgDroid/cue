@@ -173,6 +173,8 @@ fn show_to_fetched(s: Show, country: &str, services: &[Service]) -> FetchedTitle
         genres: s.genres.into_iter().map(|g| g.name).collect(),
         cast: s.cast,
         services: svcs,
+        poster: None,
+        backdrop: None,
     }
 }
 

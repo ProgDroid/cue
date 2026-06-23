@@ -16,6 +16,15 @@ pub mod motn;
 pub mod plex;
 pub mod store;
 
+/// One artwork reference plus how the proxy endpoint must serve it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageRef {
+    /// Public absolute URL (when `remote`) or a relative Plex path (when not).
+    pub value: String,
+    /// `true` => public CDN URL (302 redirect); `false` => Plex path (token proxy).
+    pub remote: bool,
+}
+
 /// A source-agnostic catalogue row emitted by every `CatalogueSource`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FetchedTitle {
@@ -31,6 +40,8 @@ pub struct FetchedTitle {
     pub genres: Vec<String>,
     pub cast: Vec<String>,
     pub services: Vec<Service>,
+    pub poster: Option<ImageRef>,
+    pub backdrop: Option<ImageRef>,
 }
 
 /// An external catalogue client. A *client* is the unit of fetching and failure;
@@ -205,6 +216,8 @@ mod tests {
             genres: vec![],
             cast: vec![],
             services: vec![Service::Plex],
+            poster: None,
+            backdrop: None,
         };
         assert_eq!(t.services, vec![Service::Plex]);
     }
@@ -253,6 +266,8 @@ mod orchestrator_tests {
             genres: vec!["action".into()],
             cast: vec![],
             services,
+            poster: None,
+            backdrop: None,
         }
     }
 
