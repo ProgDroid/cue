@@ -22,7 +22,7 @@ function makeDetail(over: Partial<TitleDetail> = {}): TitleDetail {
   }
 }
 
-beforeEach(() => setActivePinia(createPinia()))
+beforeEach(() => { setActivePinia(createPinia()); vi.restoreAllMocks() })
 
 async function mountDetail(title: TitleDetail) {
   const router = createRouter({
