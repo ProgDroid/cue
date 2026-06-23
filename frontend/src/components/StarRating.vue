@@ -1,18 +1,25 @@
 <script setup lang="ts">
-const props = defineProps<{ value: number | null }>()
-const emit = defineEmits<{ set: [n: number] }>()
+const props = defineProps<{ value: number | null; disabled?: boolean }>()
+const emit = defineEmits<{ set: [n: number]; clear: [] }>()
 
-const STARS = [1, 2, 3, 4, 5]
+const STARS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+function click(n: number) {
+  if (props.disabled) return
+  if (n === props.value) emit('clear')
+  else emit('set', n)
+}
 </script>
 
 <template>
-  <div class="star-row">
+  <div class="star-row" :class="{ 'star-row--disabled': props.disabled }">
     <button
       v-for="n in STARS"
       :key="n"
       data-test="star"
+      :disabled="props.disabled"
       :class="['star', { filled: props.value !== null && n <= props.value }]"
-      @click="emit('set', n)"
+      @click="click(n)"
     >★</button>
   </div>
 </template>
@@ -20,7 +27,7 @@ const STARS = [1, 2, 3, 4, 5]
 <style scoped>
 .star-row {
   display: flex;
-  gap: 5px;
+  gap: 3px;
 }
 
 .star {
@@ -28,7 +35,7 @@ const STARS = [1, 2, 3, 4, 5]
   border: none;
   padding: 0;
   cursor: pointer;
-  font-size: 24px;
+  font-size: 20px;
   line-height: 1;
   color: var(--star-empty, #3a3f4a);
   transition: color 0.1s ease;
@@ -38,7 +45,12 @@ const STARS = [1, 2, 3, 4, 5]
   color: var(--star-filled, #f5c518);
 }
 
-.star:hover {
+.star:not(:disabled):hover {
   color: var(--star-filled, #f5c518);
+}
+
+.star-row--disabled .star {
+  cursor: default;
+  opacity: 0.5;
 }
 </style>
