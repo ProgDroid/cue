@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { Title } from '@/types'
 import { posterPlaceholder, monogram, services } from '@/design/tokens'
 
@@ -10,6 +10,9 @@ const ph = computed(() => posterPlaceholder(props.title.title))
 const mono = computed(() => monogram(props.title.title))
 
 const metaLine = computed(() => `${props.title.year} · ${props.title.type}`)
+
+const imgFailed = ref(false)
+const posterSrc = computed(() => `/api/titles/${props.title.id}/poster`)
 </script>
 
 <template>
@@ -25,6 +28,16 @@ const metaLine = computed(() => `${props.title.year} · ${props.title.type}`)
 
       <!-- Monogram -->
       <div class="poster-mono" :style="{ color: ph.glyphColor }">{{ mono }}</div>
+
+      <!-- Real art overlay (hides on error, revealing placeholder) -->
+      <img
+        v-show="!imgFailed"
+        :src="posterSrc"
+        loading="lazy"
+        alt=""
+        class="poster-img"
+        @error="imgFailed = true"
+      />
 
       <!-- Vignette overlay -->
       <div class="poster-vignette" />
@@ -83,6 +96,14 @@ const metaLine = computed(() => `${props.title.year} · ${props.title.type}`)
   border-radius: var(--r-md, 8px);
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.poster-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .poster-motif {

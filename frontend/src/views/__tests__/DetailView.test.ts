@@ -27,5 +27,7 @@ describe('DetailView', () => {
     expect(w.text()).toContain('Coco')
     expect(w.text()).toContain('Anthony Gonzalez')
     expect(w.text()).toContain('2017')
+    expect(w.find('.poster img').attributes('src')).toContain('/poster')
+    expect(w.find('.backdrop img').attributes('src')).toContain('/backdrop')
   })
 })

@@ -10,10 +10,18 @@ const title: Title = {
 }
 
 describe('PosterCard', () => {
-  it('renders title and a monogram placeholder (no <img> until real art)', () => {
+  it('renders a lazy <img> pointing at the poster endpoint', () => {
     const w = mount(PosterCard, { props: { title, watched: false } })
-    expect(w.text()).toContain('Frieren')
-    expect(w.find('img').exists()).toBe(false)
+    const img = w.find('img')
+    expect(img.exists()).toBe(true)
+    expect(img.attributes('src')).toBe('/api/titles/7/poster')
+    expect(img.attributes('loading')).toBe('lazy')
+  })
+
+  it('hides the image (revealing placeholder) when it fails to load', async () => {
+    const w = mount(PosterCard, { props: { title, watched: false } })
+    await w.find('img').trigger('error')
+    expect(w.find('img').isVisible()).toBe(false)
   })
 
   it('emits select on card click and find-similar on ✦', async () => {

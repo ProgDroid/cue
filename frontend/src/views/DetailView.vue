@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCatalogueStore } from '@/stores/catalogue'
 import ServicePill from '@/components/ServicePill.vue'
@@ -40,6 +40,10 @@ onMounted(() => {
     store.load()
   }
 })
+
+const posterFailed = ref(false)
+const backdropFailed = ref(false)
+const simFailed = ref<Record<number, boolean>>({})
 </script>
 
 <template>
@@ -50,6 +54,14 @@ onMounted(() => {
       <div class="backdrop-motif" :style="{ background: ph.motif }" />
       <!-- Large monogram -->
       <div class="backdrop-mono" :style="{ color: ph.glyphColor }">{{ mono }}</div>
+      <!-- Real art overlay -->
+      <img
+        v-show="title && !backdropFailed"
+        :src="`/api/titles/${title.id}/backdrop`"
+        alt=""
+        class="backdrop-img"
+        @error="backdropFailed = true"
+      />
       <!-- Bottom fade scrim -->
       <div class="scrim-bottom" />
       <!-- Left fade scrim -->
@@ -65,6 +77,14 @@ onMounted(() => {
         <div class="poster" :style="{ background: ph.background }">
           <div class="poster-motif" :style="{ background: ph.motif }" />
           <div class="poster-mono" :style="{ color: ph.glyphColor }">{{ mono }}</div>
+          <img
+            v-show="title && !posterFailed"
+            :src="`/api/titles/${title.id}/poster`"
+            loading="lazy"
+            alt=""
+            class="poster-img"
+            @error="posterFailed = true"
+          />
         </div>
 
         <!-- Mark as watched button -->
@@ -150,6 +170,14 @@ onMounted(() => {
                   class="sim-poster-mono"
                   :style="{ color: posterPlaceholder(sim.title).glyphColor }"
                 >{{ monogram(sim.title) }}</div>
+                <img
+                  v-show="!simFailed[sim.id]"
+                  :src="`/api/titles/${sim.id}/poster`"
+                  loading="lazy"
+                  alt=""
+                  class="sim-poster-img"
+                  @error="simFailed[sim.id] = true"
+                />
               </div>
               <div class="sim-title">{{ sim.title }}</div>
             </div>
@@ -166,6 +194,16 @@ onMounted(() => {
   position: relative;
   height: 360px;
   overflow: hidden;
+}
+
+.backdrop-img,
+.poster-img,
+.sim-poster-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .backdrop-motif {
