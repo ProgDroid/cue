@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import type { ServiceKey, Title, TitleKind, ThreadStep, AskResult } from '@/types'
 import { getCatalogue } from '@/api/client'
 import { askService } from '@/services'
+import { setRating as apiSetRating, clearRating as apiClearRating, setWatched as apiSetWatched } from '@/api/userData'
 
 type Status = 'idle' | 'loading' | 'ready' | 'error'
 type ServiceFilter = 'all' | ServiceKey
@@ -26,6 +27,7 @@ interface State {
   thread: ThreadStep[]
   resolving: boolean
   askError: string | null
+  userDataError: string | null
 }
 
 export const useCatalogueStore = defineStore('catalogue', {
@@ -47,6 +49,7 @@ export const useCatalogueStore = defineStore('catalogue', {
     thread: [],
     resolving: false,
     askError: null,
+    userDataError: null,
   }),
 
   getters: {
@@ -102,9 +105,45 @@ export const useCatalogueStore = defineStore('catalogue', {
     setGenre(v: 'all' | string) { this.genre = v },
     setSort(v: SortKey) { this.sort = v },
 
-    toggleWatched(id: number) { this.watched[id] = !this.watched[id] },
-    setRating(id: number, n: number) { this.ratings[id] = n },
-    // Note: toggleWatched/setRating mutate local state only — persistence is Plan 5.
+    async toggleWatched(id: number) {
+      this.userDataError = null
+      const prev = !!this.watched[id]
+      const next = !prev
+      this.watched[id] = next // optimistic
+      try {
+        const r = await apiSetWatched(id, next)
+        this.watched[id] = r.watched // reconcile to server truth
+      } catch (e) {
+        this.watched[id] = prev // rollback
+        this.userDataError = e instanceof Error ? e.message : 'Could not update watched state.'
+      }
+    },
+
+    async setRating(id: number, n: number) {
+      this.userDataError = null
+      const prev = this.ratings[id]
+      this.ratings[id] = n // optimistic
+      try {
+        const r = await apiSetRating(id, n)
+        if (r.rating != null) this.ratings[id] = r.rating
+      } catch (e) {
+        if (prev == null) delete this.ratings[id]
+        else this.ratings[id] = prev
+        this.userDataError = e instanceof Error ? e.message : 'Could not save rating.'
+      }
+    },
+
+    async clearRating(id: number) {
+      this.userDataError = null
+      const prev = this.ratings[id]
+      delete this.ratings[id] // optimistic
+      try {
+        await apiClearRating(id)
+      } catch (e) {
+        if (prev != null) this.ratings[id] = prev
+        this.userDataError = e instanceof Error ? e.message : 'Could not clear rating.'
+      }
+    },
 
     async load() {
       this.status = 'loading'

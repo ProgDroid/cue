@@ -1,10 +1,16 @@
 import { mount, flushPromises } from '@vue/test-utils'
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import DetailView from '../DetailView.vue'
 import { useCatalogueStore } from '@/stores/catalogue'
 import type { Title } from '@/types'
+
+vi.mock('@/api/userData', () => ({
+  setRating: vi.fn().mockResolvedValue({ rating: 4 }),
+  clearRating: vi.fn().mockResolvedValue({ rating: null }),
+  setWatched: vi.fn().mockResolvedValue({ watched: true }),
+}))
 
 const title: Title = {
   id: 5,
@@ -49,6 +55,7 @@ describe('DetailView — watched/rating store wiring', () => {
     expect(btn.exists()).toBe(true)
 
     await btn.trigger('click')
+    await flushPromises()
 
     // Must be keyed by the real numeric id 5, not "[object Object]"
     expect(store.isWatched(5)).toBe(true)
@@ -65,6 +72,7 @@ describe('DetailView — watched/rating store wiring', () => {
 
     // Click the 4th star (index 3)
     await stars[3].trigger('click')
+    await flushPromises()
 
     // Must be keyed by the real numeric id 5
     expect(store.ratingOf(5)).toBe(4)
