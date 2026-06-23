@@ -215,6 +215,24 @@ impl CatalogueSource for PlexClient {
         }
         Ok(out)
     }
+
+    fn watch_history_source(&self) -> Option<&'static str> {
+        Some("plex")
+    }
+
+    async fn fetch_watch_history(&self) -> anyhow::Result<Vec<WatchRecord>> {
+        let sections: Sections = serde_json::from_str(&self.get_json("/library/sections").await?)?;
+        let mut out = Vec::new();
+        for dir in sections.media_container.directory {
+            if dir.kind == "movie" || dir.kind == "show" {
+                let body = self
+                    .get_json(&format!("/library/sections/{}/all", dir.key))
+                    .await?;
+                out.extend(parse_watch_history(&body)?);
+            }
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]

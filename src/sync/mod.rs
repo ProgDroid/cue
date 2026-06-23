@@ -69,6 +69,21 @@ pub trait CatalogueSource: Send + Sync {
     /// # Errors
     /// Returns an error if the upstream request fails or a body cannot be parsed.
     async fn fetch(&self) -> anyhow::Result<Vec<FetchedTitle>>;
+
+    /// The `watch_history.source` tag this client writes, if any.
+    /// `Some(tag)` opts the source into the watch-history replace; the default
+    /// `None` skips it (so a non-watch source never wipes another's rows).
+    fn watch_history_source(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Fetch the user's watch history from this source (default: none).
+    ///
+    /// # Errors
+    /// Returns an error if the upstream request fails or a body cannot be parsed.
+    async fn fetch_watch_history(&self) -> anyhow::Result<Vec<WatchRecord>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Run one full sync: fetch every source, merge, reconcile each successfully
@@ -85,8 +100,8 @@ pub async fn run_sync(
     embedder: Option<&dyn Embedder>,
 ) -> anyhow::Result<()> {
     let mut fetched: Vec<FetchedTitle> = Vec::new();
-    // (service, ok?) and any error message keyed by source name.
     let mut ok_services: Vec<Service> = Vec::new();
+    let mut ok_sources: Vec<&Arc<dyn CatalogueSource>> = Vec::new();
     let mut failures: Vec<(Service, String)> = Vec::new();
 
     for src in sources {
@@ -95,6 +110,7 @@ pub async fn run_sync(
                 tracing::info!("sync source {} fetched {} rows", src.name(), rows.len());
                 fetched.append(&mut rows);
                 ok_services.extend_from_slice(src.services());
+                ok_sources.push(src);
             }
             Err(e) => {
                 tracing::error!("sync source {} failed: {e:#}", src.name());
@@ -146,6 +162,26 @@ pub async fn run_sync(
             .collect();
         let pruned = store::prune_orphans_scoped(pool, &all_touched).await?;
         tracing::info!("sync pruned {pruned} orphaned titles");
+    }
+
+    // Apply watch history for each successful source that owns a watch tag.
+    // Secondary enrichment: a fetch or apply error is logged, never fatal, and
+    // a failed (or tag-less) source never runs a replace — so a Plex outage or
+    // a non-watch source (MOTN) cannot wipe existing plex rows.
+    for src in &ok_sources {
+        if let Some(tag) = src.watch_history_source() {
+            match src.fetch_watch_history().await {
+                Ok(records) => {
+                    match crate::db::user_data::replace_watch_history(pool, tag, &records).await {
+                        Ok(n) => tracing::info!("sync wrote {n} {tag} watch-history rows"),
+                        Err(e) => tracing::error!("watch-history apply failed for {tag}: {e:#}"),
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("watch-history fetch failed for {}: {e:#}", src.name());
+                }
+            }
+        }
     }
 
     if let Some(emb) = embedder {
@@ -364,6 +400,117 @@ mod orchestrator_tests {
             .await
             .unwrap();
         assert!(errs >= 1);
+    }
+
+    struct WatchFake {
+        name: &'static str,
+        services: Vec<Service>,
+        fetch: anyhow::Result<Vec<FetchedTitle>>,
+        watch_source: Option<&'static str>,
+        watch: Vec<WatchRecord>,
+    }
+    #[async_trait]
+    impl CatalogueSource for WatchFake {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+        fn services(&self) -> &'static [Service] {
+            Box::leak(self.services.clone().into_boxed_slice())
+        }
+        async fn fetch(&self) -> anyhow::Result<Vec<FetchedTitle>> {
+            match &self.fetch {
+                Ok(v) => Ok(v.clone()),
+                Err(e) => Err(anyhow::anyhow!("{e}")),
+            }
+        }
+        fn watch_history_source(&self) -> Option<&'static str> {
+            self.watch_source
+        }
+        async fn fetch_watch_history(&self) -> anyhow::Result<Vec<WatchRecord>> {
+            Ok(self.watch.clone())
+        }
+    }
+
+    async fn plex_watch_count(pool: &sqlx::SqlitePool) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM watch_history WHERE source = 'plex'")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn successful_source_applies_watch_history() {
+        let (p, _dir) = pool().await;
+        // A stale plex row should be replaced by the new scan.
+        sqlx::query("INSERT INTO watch_history (imdb_id, source) VALUES ('ttSTALE','plex')")
+            .execute(&p)
+            .await
+            .unwrap();
+        let plex = Arc::new(WatchFake {
+            name: "plex",
+            services: vec![Service::Plex],
+            fetch: Ok(vec![title("ttP", vec![Service::Plex])]),
+            watch_source: Some("plex"),
+            watch: vec![WatchRecord {
+                key: "ttW".into(),
+                watched_at: Some(1_600_000_000),
+            }],
+        }) as Arc<dyn CatalogueSource>;
+        run_sync(&p, &[plex], None).await.unwrap();
+
+        let rows: Vec<String> = sqlx::query_scalar(
+            "SELECT imdb_id FROM watch_history WHERE source = 'plex' ORDER BY imdb_id",
+        )
+        .fetch_all(&p)
+        .await
+        .unwrap();
+        assert_eq!(rows, vec!["ttW".to_string()]); // stale replaced
+    }
+
+    #[tokio::test]
+    async fn failed_source_does_not_wipe_watch_history() {
+        let (p, _dir) = pool().await;
+        sqlx::query("INSERT INTO watch_history (imdb_id, source) VALUES ('ttOLD','plex')")
+            .execute(&p)
+            .await
+            .unwrap();
+        // Plex fetch fails -> source not "successful" -> apply skipped.
+        let plex_fail = Arc::new(WatchFake {
+            name: "plex",
+            services: vec![Service::Plex],
+            fetch: Err(anyhow::anyhow!("down")),
+            watch_source: Some("plex"),
+            watch: vec![],
+        }) as Arc<dyn CatalogueSource>;
+        // A MOTN success so the run still does real work.
+        let motn = Arc::new(WatchFake {
+            name: "motn",
+            services: vec![Service::Disney, Service::Crunchyroll],
+            fetch: Ok(vec![title("ttC", vec![Service::Crunchyroll])]),
+            watch_source: None,
+            watch: vec![],
+        }) as Arc<dyn CatalogueSource>;
+        run_sync(&p, &[plex_fail, motn], None).await.unwrap();
+        assert_eq!(plex_watch_count(&p).await, 1); // ttOLD survives the outage
+    }
+
+    #[tokio::test]
+    async fn tagless_source_does_not_touch_watch_history() {
+        let (p, _dir) = pool().await;
+        sqlx::query("INSERT INTO watch_history (imdb_id, source) VALUES ('ttOLD','plex')")
+            .execute(&p)
+            .await
+            .unwrap();
+        // A successful source with no watch tag must not run a replace.
+        let motn = Arc::new(WatchFake {
+            name: "motn",
+            services: vec![Service::Disney, Service::Crunchyroll],
+            fetch: Ok(vec![title("ttC", vec![Service::Crunchyroll])]),
+            watch_source: None,
+            watch: vec![],
+        }) as Arc<dyn CatalogueSource>;
+        run_sync(&p, &[motn], None).await.unwrap();
+        assert_eq!(plex_watch_count(&p).await, 1); // ttOLD untouched (wipe-guard)
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
