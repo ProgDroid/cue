@@ -1,6 +1,7 @@
 pub mod ask;
 pub mod catalogue;
 pub mod images;
+pub mod import;
 pub mod sync;
 pub mod user_data;
 
@@ -30,6 +31,13 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
                 web::put().to(user_data::set_watched),
             )
             .route("/titles/{id}/poster", web::get().to(images::poster))
-            .route("/titles/{id}/backdrop", web::get().to(images::backdrop)),
+            .route("/titles/{id}/backdrop", web::get().to(images::backdrop))
+            .service(
+                // Raise the Bytes payload cap above actix's 256 KB default; an
+                // IMDb export of several thousand rows can exceed it.
+                web::resource("/import/ratings")
+                    .app_data(web::PayloadConfig::new(8 * 1024 * 1024))
+                    .route(web::post().to(import::import_ratings)),
+            ),
     );
 }

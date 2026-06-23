@@ -1,4 +1,8 @@
+use std::collections::HashSet;
+
 use sqlx::SqlitePool;
+
+use crate::import::imdb_ratings::RatingImport;
 
 /// Outcome of resolving a numeric title id to its `imdb_id` write key (D6).
 pub enum KeyLookup {
@@ -78,6 +82,59 @@ pub async fn set_watched(pool: &SqlitePool, key: &str, watched: bool) -> anyhow:
             .await?;
     }
     Ok(())
+}
+
+/// Summary of an import: rows written and how many resolve to a catalogue title.
+pub struct ImportOutcome {
+    pub imported: usize,
+    pub matched: usize,
+}
+
+/// Bulk-upsert imported ratings, returning counts of written rows and catalogue matches.
+///
+/// Runs in a single transaction; import overwrites on conflict, preserving
+/// `rated_at` when supplied. `matched` is how many imported `imdb_id`s exist
+/// in `titles`.
+///
+/// # Errors
+/// Returns an error if any query or the transaction fails.
+pub async fn import_ratings(
+    pool: &SqlitePool,
+    rows: &[RatingImport],
+) -> anyhow::Result<ImportOutcome> {
+    let mut tx = pool.begin().await?;
+    for row in rows {
+        sqlx::query(
+            "INSERT INTO user_ratings (imdb_id, rating, rated_at)
+             VALUES (?, ?, COALESCE(?, datetime('now')))
+             ON CONFLICT(imdb_id) DO UPDATE SET
+                 rating = excluded.rating,
+                 rated_at = excluded.rated_at",
+        )
+        .bind(&row.imdb_id)
+        .bind(row.rating)
+        .bind(row.rated_at.as_deref())
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+
+    // `matched` = imported ids that exist in the catalogue. titles is small
+    // (~5k); intersect in memory to avoid a large dynamic IN clause.
+    let imported_ids: HashSet<&str> = rows.iter().map(|r| r.imdb_id.as_str()).collect();
+    let title_ids: Vec<String> =
+        sqlx::query_scalar("SELECT imdb_id FROM titles WHERE imdb_id IS NOT NULL")
+            .fetch_all(pool)
+            .await?;
+    let matched = title_ids
+        .iter()
+        .filter(|id| imported_ids.contains(id.as_str()))
+        .count();
+
+    Ok(ImportOutcome {
+        imported: rows.len(),
+        matched,
+    })
 }
 
 #[cfg(test)]
@@ -190,5 +247,53 @@ mod tests {
         .await
         .unwrap();
         assert_eq!((manual_after, plex_after), (0, 1));
+    }
+
+    #[tokio::test]
+    async fn import_ratings_upserts_overwrites_and_counts_matched() {
+        use crate::import::imdb_ratings::RatingImport;
+        let (pool, _dir) = fresh_pool().await;
+        // tt100 is in the catalogue; tt900 is not.
+        insert_title(&pool, Some("tt100")).await;
+
+        // First import sets tt100 -> 5 (with a date) and tt900 -> 7 (no date).
+        let first = vec![
+            RatingImport {
+                imdb_id: "tt100".into(),
+                rating: 5,
+                rated_at: Some("2018-01-01".into()),
+            },
+            RatingImport {
+                imdb_id: "tt900".into(),
+                rating: 7,
+                rated_at: None,
+            },
+        ];
+        let out = import_ratings(&pool, &first).await.unwrap();
+        assert_eq!((out.imported, out.matched), (2, 1)); // only tt100 is a catalogue title
+
+        // Re-import overwrites tt100 -> 9 and updates its date.
+        let second = vec![RatingImport {
+            imdb_id: "tt100".into(),
+            rating: 9,
+            rated_at: Some("2020-02-02".into()),
+        }];
+        import_ratings(&pool, &second).await.unwrap();
+
+        let (rating, rated_at): (i64, String) =
+            sqlx::query_as("SELECT rating, rated_at FROM user_ratings WHERE imdb_id = 'tt100'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(rating, 9);
+        assert_eq!(rated_at, "2020-02-02");
+
+        // tt900 (no date) got the now() default — a non-empty timestamp.
+        let t900: String =
+            sqlx::query_scalar("SELECT rated_at FROM user_ratings WHERE imdb_id = 'tt900'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(!t900.is_empty());
     }
 }

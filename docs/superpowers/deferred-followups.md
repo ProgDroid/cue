@@ -54,8 +54,34 @@ live but still working acceptably:
   names used by MOTN `imageSet` against a real `/shows` response and capture a
   `parse_page` fixture to lock the parser to live data (deferred from Task 4 —
   no MOTN key in the build env).
-- **IMDb ratings-export import** → `user_ratings` (schema ready & now 1–10 so
-  imports are lossless; importer UI deferred — master spec §11).
+- ✅ **IMDb ratings-export import — DONE & merged 2026-06-23** (branch
+  `feat/imdb-ratings-import`). `POST /api/import/ratings` accepts the raw IMDb
+  ratings CSV (text body, `csv` crate, header-named `Const`/`Your Rating`/
+  `Date Rated`); `parse_ratings` skips invalid/unrated rows; `import_ratings`
+  upserts in one transaction — **import everything** regardless of catalogue
+  membership (no FK; unmatched ratings sit dormant until a matching title
+  syncs), **overwrite on conflict**, **preserve `Date Rated`** into `rated_at`
+  via `COALESCE(?, datetime('now'))`. 1–10 lossless (migration `0002`). Endpoint
+  returns `{ imported, skipped, matched }`; `400 no_ratings_found` on empty.
+  Frontend Settings card uploads the file (`file.text()` → `importRatings`),
+  shows the summary, and re-fetches the catalogue so ratings surface without a
+  reload. Payload cap raised 256 KB → 8 MB (endpoint-scoped). See spec
+  `docs/superpowers/specs/2026-06-23-cue-imdb-ratings-import-design.md` and plan
+  `docs/superpowers/plans/2026-06-23-imdb-ratings-import.md`.
+- **IMDb ratings import — live-verify (post-merge):** run a real IMDb ratings
+  export through the Settings card and confirm (a) the summary counts look sane
+  vs the file (imported + skipped ≈ rated rows; `matched` ≈ titles you own);
+  (b) ratings appear on the grid/detail for owned titles after the automatic
+  re-fetch (no manual reload); (c) real-export quirks parse cleanly — a UTF-8
+  BOM on the first header, CRLF line endings, and the full 14-column header.
+  The automated suite proves the contract + persistence; only a real export
+  exercises these CSV quirks.
+  Non-blocking polish noted at merge: result line has no singular/plural
+  handling ("1 rows skipped"); `matched` scans the full `titles` table
+  (fine at ~5k, scales with catalogue not import); endpoint test harness
+  registers via plain `cfg.route()` so it wouldn't catch loss of the
+  production `PayloadConfig`; `invalid_utf8` branch untested;
+  `looks_like_iso_date` accepts impossible dates (e.g. `2021-02-31`).
 - **Plex watch-history import** → `watch_history` (schema ready — master spec
   §11). When built, note that manual un-watch deletes only `source='manual'`
   rows (D5.2), so imported `plex` rows are preserved.
