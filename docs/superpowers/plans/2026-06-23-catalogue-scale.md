@@ -530,9 +530,7 @@ Expected: PASS.
 
 - [ ] **Step 6: Strip `desc`/`cast` from `Title` fixtures in existing tests**
 
-Find every Title fixture that still sets `desc`/`cast`:
-
-Run: `cd frontend && npx grep -rn "desc:\|cast:" src/stores/__tests__ src/services/__tests__ 2>/dev/null || rg -n "desc:|cast:" src/stores/__tests__ src/services/__tests__`
+Find every Title fixture that still sets `desc`/`cast` (use the Grep tool, or `rg -n "desc:|cast:" frontend/src/stores/__tests__ frontend/src/services/__tests__`).
 
 In each match that builds a `Title`/`Title[]` fixture (e.g. the `t(p: Partial<Title>)` helper in `catalogue.test.ts`, and any fixtures in `similar.test.ts` / `ask.test.ts`), delete the `desc: ...` and `cast: ...` properties. (They are `Title` values now, which no longer have those fields.) Do **not** touch `DetailView.test.ts` / `DetailWatched.test.ts` — Task 4 owns those.
 
@@ -668,7 +666,7 @@ Replace lines 1-47 (the `<script setup>` block) with:
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCatalogueStore } from '@/stores/catalogue'
-import { getTitle, NotFoundError } from '@/api/client'
+import { getTitle } from '@/api/client'
 import type { TitleDetail } from '@/types'
 import ServicePill from '@/components/ServicePill.vue'
 import StarRating from '@/components/StarRating.vue'
@@ -689,8 +687,9 @@ async function loadDetail(tid: number) {
   detail.value = null
   try {
     detail.value = await getTitle(tid)
-  } catch (e) {
-    notFound.value = e instanceof NotFoundError ? true : true
+  } catch {
+    // any fetch failure (404 or otherwise) shows the not-found panel
+    notFound.value = true
   } finally {
     loading.value = false
   }
@@ -728,7 +727,7 @@ const simFailed = ref<Record<number, boolean>>({})
 </script>
 ```
 
-(The `notFound.value = ... ? true : true` is intentional: any fetch failure shows the not-found panel; kept as a single branch so a future "error vs missing" split has an obvious seam.)
+(Any fetch failure — 404 or network — shows the not-found panel; if a future "error vs missing" split is wanted, branch on `e instanceof NotFoundError` here and re-import it.)
 
 - [ ] **Step 5: Update the `DetailView.vue` template to use `detail` + add loading/missing states**
 
