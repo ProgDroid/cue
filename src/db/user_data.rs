@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use sqlx::SqlitePool;
 
 use crate::import::imdb_ratings::RatingImport;
+use crate::sync::WatchRecord;
 
 /// Outcome of resolving a numeric title id to its `imdb_id` write key (D6).
 pub enum KeyLookup {
@@ -137,6 +138,41 @@ pub async fn import_ratings(
     })
 }
 
+/// Replace all `watch_history` rows of a given `source` with `records`,
+/// in one transaction. Rows of other sources (including `'manual'`) are
+/// untouched (D5.2). Returns the number of rows written.
+///
+/// `watched_at` is taken from each record's unix-epoch `watched_at` via
+/// `datetime(?, 'unixepoch')`, falling back to `datetime('now')` when absent.
+///
+/// # Errors
+/// Returns an error if any query or the transaction fails (rolls back; no
+/// partial replace).
+pub async fn replace_watch_history(
+    pool: &SqlitePool,
+    source: &str,
+    records: &[WatchRecord],
+) -> anyhow::Result<usize> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM watch_history WHERE source = ?")
+        .bind(source)
+        .execute(&mut *tx)
+        .await?;
+    for r in records {
+        sqlx::query(
+            "INSERT INTO watch_history (imdb_id, watched_at, source)
+             VALUES (?, COALESCE(datetime(?, 'unixepoch'), datetime('now')), ?)",
+        )
+        .bind(&r.key)
+        .bind(r.watched_at)
+        .bind(source)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(records.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,6 +283,68 @@ mod tests {
         .await
         .unwrap();
         assert_eq!((manual_after, plex_after), (0, 1));
+    }
+
+    #[tokio::test]
+    async fn replace_watch_history_replaces_plex_and_preserves_manual() {
+        use crate::sync::WatchRecord;
+        let (pool, _dir) = fresh_pool().await;
+
+        // Pre-existing state: a stale plex row + a manual row that must survive.
+        sqlx::query("INSERT INTO watch_history (imdb_id, source) VALUES ('ttOLD', 'plex')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO watch_history (imdb_id, source) VALUES ('ttMAN', 'manual')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let records = vec![
+            WatchRecord {
+                key: "ttNEW".into(),
+                watched_at: Some(1_600_000_000),
+            },
+            WatchRecord {
+                key: "ttNODATE".into(),
+                watched_at: None,
+            },
+        ];
+        let written = replace_watch_history(&pool, "plex", &records)
+            .await
+            .unwrap();
+        assert_eq!(written, 2);
+
+        // Stale plex row gone; both new plex rows present; manual row preserved.
+        let plex: Vec<String> = sqlx::query_scalar(
+            "SELECT imdb_id FROM watch_history WHERE source = 'plex' ORDER BY imdb_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(plex, vec!["ttNEW".to_string(), "ttNODATE".to_string()]);
+
+        let manual: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM watch_history WHERE source = 'manual' AND imdb_id = 'ttMAN'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(manual, 1);
+
+        // Epoch converted to ISO; None fell back to a non-empty now() timestamp.
+        let dated: String =
+            sqlx::query_scalar("SELECT watched_at FROM watch_history WHERE imdb_id = 'ttNEW'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(dated, "2020-09-13 12:26:40"); // datetime(1600000000,'unixepoch')
+        let nodate: String =
+            sqlx::query_scalar("SELECT watched_at FROM watch_history WHERE imdb_id = 'ttNODATE'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(!nodate.is_empty());
     }
 
     #[tokio::test]
