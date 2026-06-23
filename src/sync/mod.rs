@@ -25,6 +25,17 @@ pub struct ImageRef {
     pub remote: bool,
 }
 
+/// One watched-title record emitted by a source's watch-history scan.
+///
+/// `key` is the user-data key (currently always an `imdb_id`, per D6).
+/// `watched_at` is the source's last-viewed unix epoch (seconds); `None`
+/// falls back to the DB default `datetime('now')`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WatchRecord {
+    pub key: String,
+    pub watched_at: Option<i64>,
+}
+
 /// A source-agnostic catalogue row emitted by every `CatalogueSource`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FetchedTitle {
