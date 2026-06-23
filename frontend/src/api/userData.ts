@@ -28,3 +28,15 @@ export async function setWatched(id: number, watched: boolean): Promise<{ watche
   if (!res.ok) throw new Error(errMsg(res.status))
   return (await res.json()) as { watched: boolean }
 }
+
+export async function importRatings(
+  csv: string,
+): Promise<{ imported: number; skipped: number; matched: number }> {
+  const res = await fetch('/api/import/ratings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/csv' },
+    body: csv,
+  })
+  if (!res.ok) throw new Error(errMsg(res.status))
+  return (await res.json()) as { imported: number; skipped: number; matched: number }
+}
