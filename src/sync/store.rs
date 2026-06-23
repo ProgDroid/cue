@@ -411,6 +411,36 @@ mod tests {
         assert_eq!(row.1, None); // not the plex column
         assert_eq!(row.2, None); // backdrop not remote
         assert_eq!(row.3.as_deref(), Some("/library/b.jpg")); // plex backdrop -> _plex
+
+        // UPDATE path: same imdb_id, opposite remote-ness per image, must re-map correctly.
+        let mut m2 = merged("tt9", "Img2", &[], &[Service::Plex]);
+        m2.poster = Some(ImageRef {
+            value: "/library/p2.jpg".into(),
+            remote: false,
+        });
+        m2.backdrop = Some(ImageRef {
+            value: "https://cdn/b2.jpg".into(),
+            remote: true,
+        });
+        let id2 = upsert_title(&p, &m2).await.unwrap();
+        assert_eq!(id2, id, "same imdb_id reuses the row (UPDATE, not INSERT)");
+
+        let row2: (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = sqlx::query_as(
+            "SELECT poster_url, poster_plex, backdrop_url, backdrop_plex FROM titles WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(row2.0, None); // poster now non-remote -> _url cleared
+        assert_eq!(row2.1.as_deref(), Some("/library/p2.jpg")); // poster -> _plex
+        assert_eq!(row2.2.as_deref(), Some("https://cdn/b2.jpg")); // backdrop now remote -> _url
+        assert_eq!(row2.3, None); // backdrop _plex cleared
     }
 
     #[tokio::test]
