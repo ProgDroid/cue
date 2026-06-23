@@ -5,6 +5,7 @@ import { useCatalogueStore } from '@/stores/catalogue'
 import ServicePill from '@/components/ServicePill.vue'
 import StarRating from '@/components/StarRating.vue'
 import { posterPlaceholder, monogram } from '@/design/tokens'
+import type { TitleDetail } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -40,6 +41,17 @@ onMounted(() => {
     store.load()
   }
 })
+
+// Task 4 will set _fetchedDetail via getTitle(). Until then, fall back to
+// the store entry if it already carries TitleDetail fields (e.g. in tests).
+const _fetchedDetail = ref<TitleDetail | null>(null)
+function isTitleDetail(v: unknown): v is TitleDetail {
+  return typeof v === 'object' && v !== null
+    && typeof (v as Record<string, unknown>).desc === 'string'
+}
+const detail = computed<TitleDetail | null>(() =>
+  _fetchedDetail.value ?? (isTitleDetail(title.value) ? title.value : null)
+)
 
 const posterFailed = ref(false)
 const backdropFailed = ref(false)
@@ -135,13 +147,13 @@ const simFailed = ref<Record<number, boolean>>({})
         <div class="fact-line">{{ factLine }}</div>
 
         <!-- Description -->
-        <p class="desc">{{ title.desc }}</p>
+        <p class="desc">{{ detail?.desc ?? '' }}</p>
 
         <!-- Cast -->
         <div class="cast-section">
           <div class="section-eyebrow">Cast</div>
           <div class="cast-chips">
-            <span v-for="person in title.cast" :key="person" class="cast-chip">{{ person }}</span>
+            <span v-for="person in (detail?.cast ?? [])" :key="person" class="cast-chip">{{ person }}</span>
           </div>
         </div>
 

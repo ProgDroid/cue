@@ -4,7 +4,7 @@ import type { Title } from '@/types'
 
 const t = (id: number, title: string): Title => ({
   id, imdbId: null, title, year: 2020, services: ['plex'], type: 'movie',
-  genres: ['Drama'], imdb: 7, len: '100 min', desc: '', cast: [], watched: false, rating: null,
+  genres: ['Drama'], imdb: 7, len: '100 min', watched: false, rating: null,
 })
 
 describe('ApiAskService', () => {

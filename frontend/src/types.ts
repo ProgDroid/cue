@@ -1,7 +1,7 @@
 export type ServiceKey = 'plex' | 'disney' | 'crunchyroll'
 export type TitleKind = 'movie' | 'series'
 
-export interface Title {
+export interface TitleListItem {
   id: number
   imdbId: string | null
   title: string
@@ -11,10 +11,16 @@ export interface Title {
   genres: string[]
   imdb: number | null
   len: string
-  desc: string
-  cast: string[]
   watched: boolean
   rating: number | null
+}
+
+/** The dominant in-store shape is the slim list item. */
+export type Title = TitleListItem
+
+export interface TitleDetail extends TitleListItem {
+  desc: string
+  cast: string[]
 }
 
 export interface AskResult {

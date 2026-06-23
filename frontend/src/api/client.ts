@@ -1,4 +1,4 @@
-import type { Title } from '@/types'
+import type { Title, TitleDetail } from '@/types'
 
 function isTitle(v: unknown): v is Title {
   if (typeof v !== 'object' || v === null) return false
@@ -9,11 +9,17 @@ function isTitle(v: unknown): v is Title {
     && (r.type === 'movie' || r.type === 'series')
     && Array.isArray(r.services)
     && Array.isArray(r.genres)
-    && Array.isArray(r.cast)
     && typeof r.len === 'string'
-    && typeof r.desc === 'string'
     && typeof r.watched === 'boolean'
 }
+
+function isTitleDetail(v: unknown): v is TitleDetail {
+  if (!isTitle(v)) return false
+  const r = v as unknown as Record<string, unknown>
+  return typeof r.desc === 'string' && Array.isArray(r.cast)
+}
+
+export class NotFoundError extends Error {}
 
 export async function getCatalogue(): Promise<Title[]> {
   const res = await fetch('/api/catalogue')
@@ -26,6 +32,21 @@ export async function getCatalogue(): Promise<Title[]> {
   }
   if (!data.every(isTitle)) {
     throw new Error('catalogue response contains an invalid title')
+  }
+  return data
+}
+
+export async function getTitle(id: number): Promise<TitleDetail> {
+  const res = await fetch(`/api/titles/${id}`)
+  if (res.status === 404) {
+    throw new NotFoundError(`Title ${id} not found`)
+  }
+  if (!res.ok) {
+    throw new Error(`Failed to load title (HTTP ${res.status})`)
+  }
+  const data: unknown = await res.json()
+  if (!isTitleDetail(data)) {
+    throw new Error('title detail response is invalid')
   }
   return data
 }

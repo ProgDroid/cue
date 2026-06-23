@@ -19,8 +19,6 @@ function t(id: number): Title {
     genres: [],
     imdb: null,
     len: '',
-    desc: '',
-    cast: [],
     watched: false,
     rating: null,
   }

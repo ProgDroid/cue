@@ -4,9 +4,9 @@ import { setActivePinia, createPinia } from 'pinia'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import DetailView from '../DetailView.vue'
 import { useCatalogueStore } from '@/stores/catalogue'
-import type { Title } from '@/types'
+import type { TitleDetail } from '@/types'
 
-const title: Title = {
+const title: TitleDetail = {
   id: 5, imdbId: 'tt5', title: 'Coco', year: 2017, services: ['disney'],
   type: 'movie', genres: ['Animation', 'Musical'], imdb: 8.4, len: '105 min',
   desc: 'A boy and music.', cast: ['Anthony Gonzalez'], watched: false, rating: null,
