@@ -114,4 +114,24 @@ mod tests {
             .unwrap();
         assert_eq!(mode.to_lowercase(), "wal", "pool should open in WAL mode");
     }
+
+    #[tokio::test]
+    async fn user_ratings_accepts_one_to_ten() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("test.db");
+        let url = format!("sqlite:{}", db.to_string_lossy().replace('\\', "/"));
+        let pool = init_pool(&url).await.unwrap();
+
+        // 10 is now in range.
+        sqlx::query("INSERT INTO user_ratings (imdb_id, rating) VALUES ('tt1', 10)")
+            .execute(&pool)
+            .await
+            .expect("rating 10 should be accepted after migration 0002");
+
+        // 11 is still rejected by the CHECK.
+        let too_high = sqlx::query("INSERT INTO user_ratings (imdb_id, rating) VALUES ('tt2', 11)")
+            .execute(&pool)
+            .await;
+        assert!(too_high.is_err(), "rating 11 must violate the CHECK");
+    }
 }
