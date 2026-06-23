@@ -4,6 +4,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import DetailView from '../DetailView.vue'
 import { useCatalogueStore } from '@/stores/catalogue'
+import * as client from '@/api/client'
 import type { TitleDetail } from '@/types'
 
 vi.mock('@/api/userData', () => ({
@@ -12,7 +13,7 @@ vi.mock('@/api/userData', () => ({
   setWatched: vi.fn().mockResolvedValue({ watched: true }),
 }))
 
-function makeTitleDetail(over: Partial<TitleDetail> = {}): TitleDetail {
+function makeDetail(over: Partial<TitleDetail> = {}): TitleDetail {
   return {
     id: 5, imdbId: 'tt0000005', title: 'Coco', year: 2017, services: ['disney'],
     type: 'movie', genres: ['Animation'], imdb: 8.4, len: '105 min',
@@ -31,6 +32,7 @@ async function mountDetail(title: TitleDetail) {
       { path: '/title/:id', component: DetailView },
     ],
   })
+  vi.spyOn(client, 'getTitle').mockResolvedValue(title)
   const store = useCatalogueStore()
   store.catalogue = [title]
   router.push(`/title/${title.id}`)
@@ -42,7 +44,7 @@ async function mountDetail(title: TitleDetail) {
 
 describe('DetailView — watched/rating store wiring', () => {
   it('mark-watched persists and updates the store', async () => {
-    const { wrapper, store } = await mountDetail(makeTitleDetail())
+    const { wrapper, store } = await mountDetail(makeDetail())
     await wrapper.find('[data-test="mark-watched"]').trigger('click')
     await flushPromises()
     expect(store.isWatched(5)).toBe(true)
@@ -50,7 +52,7 @@ describe('DetailView — watched/rating store wiring', () => {
   })
 
   it('clicking a star persists the rating', async () => {
-    const { wrapper, store } = await mountDetail(makeTitleDetail())
+    const { wrapper, store } = await mountDetail(makeDetail())
     const stars = wrapper.findAll('[data-test="star"]')
     expect(stars).toHaveLength(10)
     await stars[6].trigger('click') // 7th pip
@@ -60,7 +62,7 @@ describe('DetailView — watched/rating store wiring', () => {
   })
 
   it('disables controls when the title has no imdbId', async () => {
-    const { wrapper } = await mountDetail(makeTitleDetail({ imdbId: null }))
+    const { wrapper } = await mountDetail(makeDetail({ imdbId: null }))
     expect(wrapper.find('[data-test="mark-watched"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('[data-test="star"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('.no-imdb-hint').exists()).toBe(true)
