@@ -108,5 +108,13 @@ All non-blocking; the whole-branch review verdict was "Ready to merge".
   `/changes` response as a fixture and confirm the embedded `shows` map carries
   `id`/`imdbId`/`streamingOptions` (spec §12 assumption). If `shows` is an array, not
   a map, adjust `ChangesPage.shows` to `Vec<Show>` keyed via each show's `id`.
+  Also confirm the embedded shows carry `streamingOptions[gb]`: in delta mode
+  `show_to_fetched` is called with the full resolved set `[Disney, Crunchyroll]`, so a
+  `new` show that omits `streamingOptions` hits the fallback and is tagged with BOTH
+  services instead of the one it's actually on (bounded; a recovery re-seed corrects it).
+  If embedded shows lack `streamingOptions`, attribute `new` deltas from the per-change
+  `service` field (`ChangeEntry`, spec §3) instead of the searched set, and add the
+  captured fixture as a `parse_changes` test asserting per-service attribution (so the
+  delta path gets the seed path's coverage).
 - **MOTN cache state in settings UI (deferred):** `/api/sync/status` could surface
   cache size + last seed vs delta mode. Out of scope for the incremental-sync plan.
