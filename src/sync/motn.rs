@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use async_trait::async_trait;
 use serde::Deserialize;
 
+use crate::db::motn_cache::CachedTitle;
 use crate::models::{Service, TitleKind};
 use crate::sync::{CatalogueSource, FetchedTitle};
 
@@ -63,9 +64,34 @@ struct Page {
     next_cursor: Option<String>,
 }
 
+/// One `/changes` response page. `shows` is a map keyed by showId.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChangesPage {
+    #[serde(default)]
+    changes: Vec<ChangeEntry>,
+    #[serde(default)]
+    shows: HashMap<String, Show>,
+    #[serde(default)]
+    has_more: bool,
+    #[serde(default)]
+    next_cursor: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChangeEntry {
+    change_type: String,
+    #[serde(default)]
+    item_type: Option<String>,
+    show_id: String,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Show {
+    #[serde(default)]
+    id: String,
     imdb_id: Option<String>,
     tmdb_id: Option<String>,
     title: String,
@@ -101,12 +127,55 @@ struct Named {
     name: String,
 }
 
-/// Parse one search page into `(titles, next_cursor)`.
-///
-/// Each title is stamped with only the wanted services its
-/// `streamingOptions[country]` actually lists, so a combined
-/// `disney,crunchyroll` search attributes each title correctly instead of
-/// tagging every result with both services.
+/// Map one MOTN show into a `FetchedTitle`, attributing only the wanted services
+/// its per-country `streamingOptions` actually lists (falling back to the searched
+/// set when availability is missing). Shared by the seed and `/changes` paths.
+fn show_to_fetched(s: Show, country: &str, services: &[Service]) -> FetchedTitle {
+    let kind = if s.show_type == "series" {
+        TitleKind::Series
+    } else {
+        TitleKind::Movie
+    };
+    let year = s.release_year.or(s.first_air_year);
+    let length = match kind {
+        TitleKind::Movie => s.runtime.map(|m| format!("{m} min")),
+        TitleKind::Series => s.episode_count.map(|e| format!("{e} eps")),
+    };
+    let svcs = {
+        let available: HashSet<&str> = s
+            .streaming_options
+            .get(country)
+            .map(|opts| opts.iter().map(|o| o.service.id.as_str()).collect())
+            .unwrap_or_default();
+        let attributed: Vec<Service> = services
+            .iter()
+            .copied()
+            .filter(|svc| wanted_id(*svc).is_some_and(|id| available.contains(id)))
+            .collect();
+        if attributed.is_empty() {
+            services.to_vec()
+        } else {
+            attributed
+        }
+    };
+    FetchedTitle {
+        imdb_id: s.imdb_id,
+        tmdb_id: s.tmdb_id,
+        plex_guid: None,
+        title: s.title,
+        year,
+        kind,
+        imdb_rating: s.rating.map(|r| r / 10.0),
+        length,
+        description: s.overview,
+        genres: s.genres.into_iter().map(|g| g.name).collect(),
+        cast: s.cast,
+        services: svcs,
+    }
+}
+
+/// Parse one search page into `(titles, next_cursor)`. (Kept for callers/tests;
+/// delegates to `parse_page_entries` and drops the show ids.)
 ///
 /// # Errors
 /// Returns an error if the JSON does not match the expected shape.
@@ -115,57 +184,33 @@ pub fn parse_page(
     country: &str,
     services: &[Service],
 ) -> anyhow::Result<(Vec<FetchedTitle>, Option<String>)> {
+    let (entries, cursor) = parse_page_entries(json, country, services)?;
+    let titles = entries
+        .into_iter()
+        .map(|(_, ct)| ct.into_fetched())
+        .collect();
+    Ok((titles, cursor))
+}
+
+/// Parse one search page into `((show_id, CachedTitle), next_cursor)` for seeding
+/// the cache.
+///
+/// # Errors
+/// Returns an error if the JSON does not match the expected shape.
+#[allow(clippy::type_complexity)]
+pub fn parse_page_entries(
+    json: &str,
+    country: &str,
+    services: &[Service],
+) -> anyhow::Result<(Vec<(String, CachedTitle)>, Option<String>)> {
     let page: Page = serde_json::from_str(json)?;
-    let titles = page
+    let entries = page
         .shows
         .into_iter()
         .map(|s| {
-            let kind = if s.show_type == "series" {
-                TitleKind::Series
-            } else {
-                TitleKind::Movie
-            };
-            let year = s.release_year.or(s.first_air_year);
-            let length = match kind {
-                TitleKind::Movie => s.runtime.map(|m| format!("{m} min")),
-                TitleKind::Series => s.episode_count.map(|e| format!("{e} eps")),
-            };
-            // Attribute only the wanted services this title is actually on
-            // (scoped so the borrow of `streaming_options` ends before the moves).
-            let svcs = {
-                let available: HashSet<&str> = s
-                    .streaming_options
-                    .get(country)
-                    .map(|opts| opts.iter().map(|o| o.service.id.as_str()).collect())
-                    .unwrap_or_default();
-                let attributed: Vec<Service> = services
-                    .iter()
-                    .copied()
-                    .filter(|svc| wanted_id(*svc).is_some_and(|id| available.contains(id)))
-                    .collect();
-                // A search result should be on at least one searched service; if
-                // streamingOptions is missing/unexpected, never drop the title —
-                // fall back to the searched set.
-                if attributed.is_empty() {
-                    services.to_vec()
-                } else {
-                    attributed
-                }
-            };
-            FetchedTitle {
-                imdb_id: s.imdb_id,
-                tmdb_id: s.tmdb_id,
-                plex_guid: None,
-                title: s.title,
-                year,
-                kind,
-                imdb_rating: s.rating.map(|r| r / 10.0),
-                length,
-                description: s.overview,
-                genres: s.genres.into_iter().map(|g| g.name).collect(),
-                cast: s.cast,
-                services: svcs,
-            }
+            let id = s.id.clone();
+            let ft = show_to_fetched(s, country, services);
+            (id, CachedTitle::from(&ft))
         })
         .collect();
     let cursor = if page.has_more {
@@ -173,7 +218,68 @@ pub fn parse_page(
     } else {
         None
     };
-    Ok((titles, cursor))
+    Ok((entries, cursor))
+}
+
+/// Additions/removals distilled from one or more `/changes` pages.
+#[derive(Debug, Default)]
+pub struct ParsedChanges {
+    pub additions: Vec<(String, CachedTitle)>, // (show_id, title)
+    pub removals: Vec<String>,                 // show_ids
+}
+
+impl ParsedChanges {
+    #[allow(dead_code)] // used by fetch() in the delta loop (Task 5)
+    fn merge(&mut self, mut other: Self) {
+        self.additions.append(&mut other.additions);
+        self.removals.append(&mut other.removals);
+    }
+}
+
+/// Parse one `/changes` page into `(ParsedChanges, next_cursor)`.
+///
+/// `new` changes are turned into cache upserts using the embedded `shows` detail;
+/// a `new` change whose show is missing from `shows` or lacks an `imdbId` is
+/// skipped with a warning rather than aborting the sync. `removed` changes need
+/// only the `showId`. Non-show item types are ignored.
+///
+/// # Errors
+/// Returns an error only if the page JSON itself does not parse.
+pub fn parse_changes(
+    json: &str,
+    country: &str,
+    services: &[Service],
+) -> anyhow::Result<(ParsedChanges, Option<String>)> {
+    let mut page: ChangesPage = serde_json::from_str(json)?;
+    let mut out = ParsedChanges::default();
+    for ch in &page.changes {
+        if ch.item_type.as_deref().is_some_and(|t| t != "show") {
+            continue;
+        }
+        match ch.change_type.as_str() {
+            "new" => {
+                let Some(show) = page.shows.remove(&ch.show_id) else {
+                    tracing::warn!("MOTN /changes 'new' {} missing show detail", ch.show_id);
+                    continue;
+                };
+                let ft = show_to_fetched(show, country, services);
+                if ft.imdb_id.is_none() {
+                    tracing::warn!("MOTN /changes 'new' {} has no imdbId; skipping", ch.show_id);
+                    continue;
+                }
+                out.additions
+                    .push((ch.show_id.clone(), CachedTitle::from(&ft)));
+            }
+            "removed" => out.removals.push(ch.show_id.clone()),
+            _ => {}
+        }
+    }
+    let cursor = if page.has_more {
+        page.next_cursor
+    } else {
+        None
+    };
+    Ok((out, cursor))
 }
 
 /// The MOTN catalog id for a wanted service (`Disney` → "disney", etc.).
@@ -307,8 +413,7 @@ mod tests {
         // Combined disney,crunchyroll search: each title must be tagged only with
         // the service(s) its streamingOptions[gb] actually lists, not both.
         let json = include_str!("../../tests/fixtures/motn_search_mixed.json");
-        let (titles, _) =
-            parse_page(json, "gb", &[Service::Disney, Service::Crunchyroll]).unwrap();
+        let (titles, _) = parse_page(json, "gb", &[Service::Disney, Service::Crunchyroll]).unwrap();
         assert_eq!(
             titles[0].services,
             vec![Service::Disney],
@@ -327,5 +432,68 @@ mod tests {
         let json = r#"{ "shows": [ { "title": "X", "showType": "movie" } ], "hasMore": false }"#;
         let (titles, _) = parse_page(json, "gb", &[Service::Disney]).unwrap();
         assert_eq!(titles[0].services, vec![Service::Disney]);
+    }
+
+    #[test]
+    fn parse_page_entries_pairs_show_id_with_title() {
+        let json = r#"{
+            "shows": [
+                {"id":"100","imdbId":"tt1","title":"A","showType":"movie","releaseYear":2020,
+                 "streamingOptions":{"gb":[{"service":{"id":"disney"}}]}}
+            ],
+            "hasMore": false
+        }"#;
+        let (entries, cursor) = parse_page_entries(json, "gb", &[Service::Disney]).unwrap();
+        assert_eq!(cursor, None);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "100");
+        assert_eq!(entries[0].1.title, "A");
+        assert_eq!(entries[0].1.services, vec!["disney".to_string()]);
+    }
+
+    #[test]
+    fn parse_changes_collects_new_and_removed() {
+        let json = r#"{
+            "changes": [
+                {"changeType":"new","itemType":"show","showId":"100"},
+                {"changeType":"removed","itemType":"show","showId":"200"}
+            ],
+            "shows": {
+                "100": {"id":"100","imdbId":"tt1","title":"A","showType":"movie",
+                        "streamingOptions":{"gb":[{"service":{"id":"disney"}}]}}
+            },
+            "hasMore": false
+        }"#;
+        let (parsed, cursor) = parse_changes(json, "gb", &[Service::Disney]).unwrap();
+        assert_eq!(cursor, None);
+        assert_eq!(parsed.additions.len(), 1);
+        assert_eq!(parsed.additions[0].0, "100");
+        assert_eq!(parsed.removals, vec!["200".to_string()]);
+    }
+
+    #[test]
+    fn parse_changes_skips_new_without_show_detail_or_imdb() {
+        // "new" 300 has no entry in `shows`; "new" 400 has detail but no imdbId.
+        let json = r#"{
+            "changes": [
+                {"changeType":"new","itemType":"show","showId":"300"},
+                {"changeType":"new","itemType":"show","showId":"400"}
+            ],
+            "shows": {
+                "400": {"id":"400","title":"NoImdb","showType":"movie",
+                        "streamingOptions":{"gb":[{"service":{"id":"disney"}}]}}
+            },
+            "hasMore": false
+        }"#;
+        let (parsed, _) = parse_changes(json, "gb", &[Service::Disney]).unwrap();
+        assert!(parsed.additions.is_empty());
+        assert!(parsed.removals.is_empty());
+    }
+
+    #[test]
+    fn parse_changes_propagates_cursor() {
+        let json = r#"{"changes":[],"shows":{},"hasMore":true,"nextCursor":"abc"}"#;
+        let (_, cursor) = parse_changes(json, "gb", &[Service::Disney]).unwrap();
+        assert_eq!(cursor, Some("abc".to_string()));
     }
 }
