@@ -113,6 +113,42 @@ pub async fn last_ok_unix(pool: &SqlitePool) -> anyhow::Result<Option<i64>> {
     Ok(ts)
 }
 
+/// Keep only the newest `keep` runs per source, deleting older rows so the table
+/// stays bounded. Returns the number of rows deleted.
+///
+/// # Errors
+/// Returns an error if the query fails.
+pub async fn prune_old_runs(pool: &SqlitePool, keep: i64) -> anyhow::Result<u64> {
+    let res = sqlx::query(
+        "DELETE FROM sync_runs WHERE id IN (
+             SELECT id FROM (
+                 SELECT id, ROW_NUMBER() OVER (PARTITION BY source ORDER BY id DESC) AS rn
+                 FROM sync_runs
+             ) WHERE rn > ?
+         )",
+    )
+    .bind(keep)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
+
+/// Whether any source has ever completed a successful run.
+///
+/// Drives the one-off startup sync (fresh DB / seed-only catalogue) without
+/// hard-coding the seed size: once any sync has succeeded, a reboot does not
+/// re-sync.
+///
+/// # Errors
+/// Returns an error if the query fails.
+pub async fn any_sync_ok(pool: &SqlitePool) -> anyhow::Result<bool> {
+    let ok =
+        sqlx::query_scalar::<_, i64>("SELECT EXISTS(SELECT 1 FROM sync_runs WHERE status = 'ok')")
+            .fetch_one(pool)
+            .await?;
+    Ok(ok != 0)
+}
+
 /// Whether a successful MOTN-owned run finished within the last 25 days — under
 /// MOTN's 31-day `/changes` window, so a delta sync would not miss changes.
 ///
@@ -170,6 +206,46 @@ mod tests {
         assert_eq!(s.titles, 28);
         assert_eq!(s.movies + s.series, 28);
         assert_eq!(s.embedded, 0);
+    }
+
+    #[tokio::test]
+    async fn prune_old_runs_keeps_newest_n_per_source() {
+        let (p, _dir) = pool().await;
+        for _ in 0..5 {
+            record(&p, "plex", "ok", 1, None).await.unwrap();
+        }
+        for _ in 0..2 {
+            record(&p, "disney", "ok", 1, None).await.unwrap();
+        }
+        let deleted = prune_old_runs(&p, 3).await.unwrap();
+        assert_eq!(
+            deleted, 2,
+            "plex had 5 -> keep 3 -> delete 2; disney 2 -> 0"
+        );
+        let plex: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sync_runs WHERE source = 'plex'")
+            .fetch_one(&p)
+            .await
+            .unwrap();
+        let disney: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sync_runs WHERE source = 'disney'")
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(plex, 3);
+        assert_eq!(disney, 2);
+    }
+
+    #[tokio::test]
+    async fn any_sync_ok_is_false_until_a_successful_run() {
+        let (p, _dir) = pool().await;
+        assert!(!any_sync_ok(&p).await.unwrap(), "fresh DB has no ok runs");
+        record(&p, "plex", "error", 0, Some("boom")).await.unwrap();
+        assert!(
+            !any_sync_ok(&p).await.unwrap(),
+            "a failed run does not count"
+        );
+        record(&p, "plex", "ok", 3, None).await.unwrap();
+        assert!(any_sync_ok(&p).await.unwrap(), "an ok run flips it true");
     }
 
     #[tokio::test]

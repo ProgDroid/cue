@@ -12,12 +12,19 @@ function click(n: number) {
 </script>
 
 <template>
-  <div class="star-row" :class="{ 'star-row--disabled': props.disabled }">
+  <div
+    class="star-row"
+    role="group"
+    aria-label="Your rating"
+    :class="{ 'star-row--disabled': props.disabled }"
+  >
     <button
       v-for="n in STARS"
       :key="n"
       data-test="star"
       :disabled="props.disabled"
+      :aria-label="`Rate ${n} out of 10`"
+      :aria-pressed="props.value === n"
       :class="['star', { filled: props.value !== null && n <= props.value }]"
       @click="click(n)"
     >★</button>
@@ -47,6 +54,12 @@ function click(n: number) {
 
 .star:not(:disabled):hover {
   color: var(--star-filled, #f5c518);
+}
+
+.star:focus-visible {
+  outline: 2px solid var(--accent-line-2, rgba(245, 197, 24, 0.4));
+  outline-offset: 2px;
+  border-radius: var(--r-sm, 6px);
 }
 
 .star-row--disabled .star {

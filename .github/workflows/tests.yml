@@ -1,0 +1,90 @@
+name: Tests (reusable)
+
+# Single source of truth for the backend + frontend gates, called by both ci.yml
+# (PRs) and docker-publish.yml (push to main). Previously these jobs were
+# duplicated verbatim across both files with a hand-maintained "keep pins in
+# lockstep" note — this removes that drift hazard.
+
+on:
+  workflow_call:
+
+# Actions are pinned to commit SHAs (version in the comment): the publish
+# workflow that also calls this builds the production image, so supply-chain
+# hygiene matters.
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+
+      # cue's lint policy lives in Cargo.toml's [lints.clippy] table — the gate
+      # is just `-D warnings`; clippy --all-targets also type-checks the tests.
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test
+
+  frontend:
+    name: Frontend tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # The committed package-lock.json is Linux-flavoured, so `npm ci` (strict)
+      # works in CI — this is the consumer the lock was regenerated for.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check + build
+        run: npm run build
+
+      - name: Unit tests
+        run: npm test
+
+  audit:
+    name: Dependency audit (RUSTSEC)
+    runs-on: ubuntu-latest
+    # Advisory visibility, not a hard gate: a newly-disclosed (possibly unfixable)
+    # transitive advisory should surface as a red X here, not block every PR and
+    # the image publish. Flip continue-on-error off to make it blocking.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit Cargo.lock against the RUSTSEC advisory DB
+        run: cargo audit

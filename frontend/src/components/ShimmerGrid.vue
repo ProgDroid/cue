@@ -27,7 +27,9 @@ const SHIMMER_COUNT = 10
 .shimmer-grid {
   padding: 6px 22px 40px;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  /* 158px matches MIN_COL in grid.ts so the shimmer's column count equals the
+     loaded grid's — avoids a layout shift when results replace the shimmer. */
+  grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
   gap: 22px 18px;
 }
 

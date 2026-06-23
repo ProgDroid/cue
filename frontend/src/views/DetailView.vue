@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCatalogueStore } from '@/stores/catalogue'
-import { getTitle } from '@/api/client'
+import { getTitle, NotFoundError } from '@/api/client'
 import type { TitleDetail } from '@/types'
 import ServicePill from '@/components/ServicePill.vue'
 import StarRating from '@/components/StarRating.vue'
@@ -15,18 +15,24 @@ const store = useCatalogueStore()
 const id = computed(() => Number(route.params.id))
 const detail = ref<TitleDetail | null>(null)
 const loading = ref(true)
+// Distinguish a genuine 404 (title gone) from a transient failure (network/500)
+// so the latter can offer a retry instead of a misleading "not found".
+const loadError = ref<'notfound' | 'transient' | null>(null)
 
 async function loadDetail(tid: number) {
   loading.value = true
   detail.value = null
+  loadError.value = null
   try {
     detail.value = await getTitle(tid)
-  } catch {
-    // any failure leaves detail null -> the v-else not-found panel renders
+  } catch (e) {
+    loadError.value = e instanceof NotFoundError ? 'notfound' : 'transient'
   } finally {
     loading.value = false
   }
 }
+
+function retry() { loadDetail(id.value) }
 
 const ph = computed(() => detail.value ? posterPlaceholder(detail.value.title) : null)
 const mono = computed(() => detail.value ? monogram(detail.value.title) : '')
@@ -38,6 +44,16 @@ const factLine = computed(() => {
 })
 
 const similar = computed(() => detail.value ? store.similar(id.value) : [])
+// Precompute placeholder + monogram once per similar title (the template would
+// otherwise call posterPlaceholder() three times per card on every render).
+const simCards = computed(() =>
+  similar.value.map((s) => ({
+    id: s.id,
+    title: s.title,
+    ph: posterPlaceholder(s.title),
+    mono: monogram(s.title),
+  })),
+)
 
 function back() { router.push('/') }
 
@@ -122,6 +138,12 @@ const simFailed = ref<Record<number, boolean>>({})
           />
           <p v-if="!canRate" class="no-imdb-hint">No IMDb match — can't save ratings.</p>
         </div>
+
+        <!-- Write-failure feedback: rating/watched writes roll back optimistically
+             on error; without this the change would silently revert. -->
+        <p v-if="store.userDataError" class="userdata-error" data-test="userdata-error">
+          {{ store.userDataError }}
+        </p>
       </div>
 
       <!-- Right: info column -->
@@ -166,23 +188,28 @@ const simFailed = ref<Record<number, boolean>>({})
           </div>
           <div class="similar-grid">
             <div
-              v-for="sim in similar"
+              v-for="sim in simCards"
               :key="sim.id"
               class="sim-card"
+              role="button"
+              tabindex="0"
+              :aria-label="`Open ${sim.title}`"
               @click="router.push(`/title/${sim.id}`)"
+              @keydown.enter="router.push(`/title/${sim.id}`)"
+              @keydown.space.prevent="router.push(`/title/${sim.id}`)"
             >
               <div
                 class="sim-poster"
-                :style="{ background: posterPlaceholder(sim.title).background }"
+                :style="{ background: sim.ph.background }"
               >
                 <div
                   class="sim-poster-motif"
-                  :style="{ background: posterPlaceholder(sim.title).motif }"
+                  :style="{ background: sim.ph.motif }"
                 />
                 <div
                   class="sim-poster-mono"
-                  :style="{ color: posterPlaceholder(sim.title).glyphColor }"
-                >{{ monogram(sim.title) }}</div>
+                  :style="{ color: sim.ph.glyphColor }"
+                >{{ sim.mono }}</div>
                 <img
                   v-show="!simFailed[sim.id]"
                   :src="`/api/titles/${sim.id}/poster`"
@@ -200,7 +227,12 @@ const simFailed = ref<Record<number, boolean>>({})
     </div>
   </div>
   <div v-else-if="loading" class="detail-state">Loading…</div>
-  <div v-else class="detail-state">
+  <div v-else-if="loadError === 'transient'" class="detail-state" data-test="detail-error">
+    <p>Couldn't load this title.</p>
+    <button class="back-btn" @click="retry">Retry</button>
+    <button class="back-btn" @click="back">← Library</button>
+  </div>
+  <div v-else class="detail-state" data-test="detail-notfound">
     <p>Title not found.</p>
     <button class="back-btn" @click="back">← Library</button>
   </div>
@@ -387,6 +419,13 @@ const simFailed = ref<Record<number, boolean>>({})
   color: var(--text-faint, #5f6570);
 }
 
+.userdata-error {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-danger, #f5a3a3);
+}
+
 .watched-btn:disabled {
   cursor: default;
   opacity: 0.5;
@@ -537,6 +576,12 @@ const simFailed = ref<Record<number, boolean>>({})
 
 .sim-card:hover {
   transform: translateY(-3px);
+}
+
+.sim-card:focus-visible {
+  outline: 2px solid var(--accent-line-2, rgba(245, 197, 24, 0.4));
+  outline-offset: 3px;
+  border-radius: var(--r-md, 8px);
 }
 
 .sim-poster {

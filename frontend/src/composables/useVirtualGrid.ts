@@ -49,8 +49,11 @@ export function useVirtualGrid(opts: UseVirtualGridOptions): UseVirtualGrid {
     const el = opts.containerEl.value
     if (el) {
       ro = new ResizeObserver((entries) => {
-        containerWidth.value = entries[0].contentRect.width
-        readScroll()
+        const width = entries[0]?.contentRect.width
+        if (width != null) {
+          containerWidth.value = width
+          readScroll()
+        }
       })
       ro.observe(el)
       containerWidth.value = el.clientWidth

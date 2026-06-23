@@ -75,6 +75,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn identity_indexes_exist() {
+        // Migration 0006 indexes titles(tmdb_id) + titles(plex_guid) so the sync
+        // identity fallback in store::find_existing doesn't full-scan.
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("test.db");
+        let url = format!("sqlite:{}", db.to_string_lossy().replace('\\', "/"));
+        let pool = init_pool(&url).await.unwrap();
+
+        let indexes: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='index' ORDER BY name")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+
+        for expected in ["idx_titles_tmdb_id", "idx_titles_plex_guid"] {
+            assert!(
+                indexes.contains(&expected.to_string()),
+                "missing index {expected}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn foreign_keys_are_enforced() {
         // SQLite only honours REFERENCES clauses when `PRAGMA foreign_keys` is
         // ON, and that pragma is per-connection. `init_pool` sets it on every

@@ -19,7 +19,12 @@ const posterSrc = computed(() => `/api/titles/${props.title.id}/poster`)
   <div
     data-test="card"
     class="card"
+    role="button"
+    tabindex="0"
+    :aria-label="`Open ${title.title}`"
     @click="emit('select', title.id)"
+    @keydown.enter="emit('select', title.id)"
+    @keydown.space.prevent="emit('select', title.id)"
   >
     <!-- Poster block -->
     <div class="poster" :style="{ background: ph.background }">
@@ -42,24 +47,37 @@ const posterSrc = computed(() => `/api/titles/${props.title.id}/poster`)
       <!-- Vignette overlay -->
       <div class="poster-vignette" />
 
-      <!-- Service badge (top-left) -->
+      <!-- Service badge (top-left) — colour identity carries a text label for SR/non-colour users -->
       <div class="poster-service-badge">
         <span
           v-for="svcKey in title.services"
           :key="svcKey"
           class="svc-dot"
+          role="img"
+          :title="services[svcKey].label"
+          :aria-label="services[svcKey].label"
           :style="{ background: services[svcKey].dot }"
         />
       </div>
 
       <!-- IMDB rating badge (top-right) -->
-      <div v-if="title.imdb !== null" class="poster-imdb-badge">
-        <span class="imdb-star">★</span>
+      <div
+        v-if="title.imdb !== null"
+        class="poster-imdb-badge"
+        :aria-label="`IMDb rating ${title.imdb}`"
+      >
+        <span class="imdb-star" aria-hidden="true">★</span>
         <span class="imdb-score">{{ title.imdb }}</span>
       </div>
 
       <!-- Watched badge (bottom-right) -->
-      <div v-if="watched" data-test="watched-badge" class="watched-badge">✓</div>
+      <div
+        v-if="watched"
+        data-test="watched-badge"
+        class="watched-badge"
+        role="img"
+        aria-label="Watched"
+      >✓</div>
     </div>
 
     <!-- Meta row -->
@@ -87,6 +105,12 @@ const posterSrc = computed(() => `/api/titles/${props.title.id}/poster`)
 
 .card:hover {
   transform: translateY(-4px);
+}
+
+.card:focus-visible {
+  outline: 2px solid var(--accent-line-2, rgba(245, 197, 24, 0.4));
+  outline-offset: 3px;
+  border-radius: var(--r-md, 8px);
 }
 
 /* Poster block */

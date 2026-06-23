@@ -8,6 +8,71 @@ subagent-driven-development cycle (it is not "planned" until it has its own
 spec/plan). Plan 5 (user-data writes) is the next committed plan and is **not**
 in this backlog.
 
+## Whole-project audit (2026-06-23)
+
+Five parallel specialist agents reviewed security, code quality/tech-debt, the
+data layer, the frontend, and architecture/ops/deps. Verdict: **no Critical
+findings**; the codebase is in good shape. Tier-1 quick wins + Docker hardening
+were fixed on branch `hardening/audit-tier1`; the rest are recorded here.
+
+### ✅ Fixed in this pass (branch `hardening/audit-tier1`)
+- **Image-proxy SSRF/open-redirect hardening** — `serve()` now only 302s a stored
+  art URL when it is `https://` on the MOTN CDN (`is_allowed_redirect`), guards
+  the Plex `plex_path` against traversal/scheme/userinfo smuggling
+  (`is_safe_plex_path`), and fetches Plex art through a shared `reqwest::Client`
+  with a 10s timeout and `redirect::Policy::none()` (was a one-off
+  `reqwest::get` — no timeout, followed redirects). `src/routes/images.rs`.
+- **Latent index panic in `surprise`** — `rmap[ia]`/`rmap[ib]` → `.get().copied().unwrap_or(0.0)`
+  so an embedding that outlived its title degrades instead of panicking.
+  `src/services/ask_engine.rs`.
+- **Sync identity indexes** — migration `0006_identity_indexes.sql` adds
+  non-UNIQUE indexes on `titles(tmdb_id)` + `titles(plex_guid)` (the
+  `find_existing` fallback was full-scanning per upsert).
+- **Silent rating/watched failures** — `DetailView` now renders
+  `store.userDataError` near the controls (the store tracked it but no component
+  showed it; failed writes rolled back with no feedback).
+- **Docker hardening** — non-root `USER cue` owning `/data`, plus a `HEALTHCHECK`
+  hitting `/api/health` so `restart: unless-stopped` can recover a wedged
+  process. *(Image build not verified locally — Docker daemon down; CI builds it.)*
+
+### ✅ Tier 2 + Tier 3 — DONE 2026-06-23 (branch `hardening/audit-tier1`)
+All cleared except two items deliberately left (see "Deferred" below).
+- ✅ Up-front config validation (`Config::validate` — bad `BIND_ADDR`/`SYNC_CRON`
+  fail at boot naming the value).
+- ✅ Magic `<= 28` seed sentinel → `sync_runs::any_sync_ok()`.
+- ✅ `isTitle` validates `imdbId`/`imdb`/`rating`.
+- ✅ DetailView distinguishes `NotFoundError` from transient errors (+ retry).
+- ✅ A11y: focusable grid/sim cards + focus rings + Enter/Space; labelled service
+  dots, IMDb/watched badges; `StarRating` group + per-star labels + `aria-pressed`.
+- ✅ `find_existing` moved into the upsert transaction (TOCTOU closed).
+- ✅ `cargo audit` job added (reusable `tests.yml`, advisory-visibility).
+- ✅ Non-root volume caveat documented (README).
+- ✅ CI deduped into reusable `tests.yml` (called by `ci.yml` + `docker-publish.yml`).
+- ✅ Operator `README.md` written (env table, compose quickstart, GHCR swap, auth warning).
+- ✅ `sync_runs(source)` indexed (migration 0007) + `prune_old_runs` keeps newest 100/source.
+- ✅ Unused `prune_orphans` gated to `#[cfg(test)]`.
+- ✅ Plex section-walk extracted to `for_each_section`.
+- ✅ Image-proxy SQL made static (`Kind::select_sql`).
+- ✅ `ShimmerGrid` uses 158px min column; `posterPlaceholder` precomputed per sim
+  card; redundant `!` removed; `ResizeObserver entries[0]` guarded; `useVirtualGrid`
+  now has direct tests; ask `ids`/`baseIds` capped at 1000.
+
+**Deferred (deliberate):**
+- **Faint-token WCAG-AA contrast** — raising `--text-faint`/`--text-faintest` to AA
+  would collapse them into `--text-muted` and flatten the intended type hierarchy.
+  Left as-is for these small decorative mono captions; revisit if AA compliance is
+  required (a design call).
+- **`--cols` cold-first-paint flash** — can momentarily show 1 column before the
+  ResizeObserver corrects within a frame. Accepted (self-heals); gating render on
+  `containerWidth > 0` would trade it for a blank frame.
+- `Box::leak` in the sync test fakes — harmless test-only artifact; left.
+
+### Cross-cutting (informational)
+- All `/api` endpoints are unauthenticated by design (D7, single-user,
+  `127.0.0.1`). The instant cue is exposed beyond localhost, every write/import/
+  sync endpoint becomes an unauthenticated mutator — worth a README warning, not
+  code today.
+
 ## Scale — now live-relevant (catalogue is ~5097 titles, no longer the 28-row seed)
 
 These were noted during Plan 3 as "fine at seed scale, revisit at prod scale."
