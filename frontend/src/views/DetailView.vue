@@ -122,6 +122,12 @@ const simFailed = ref<Record<number, boolean>>({})
           />
           <p v-if="!canRate" class="no-imdb-hint">No IMDb match — can't save ratings.</p>
         </div>
+
+        <!-- Write-failure feedback: rating/watched writes roll back optimistically
+             on error; without this the change would silently revert. -->
+        <p v-if="store.userDataError" class="userdata-error" data-test="userdata-error">
+          {{ store.userDataError }}
+        </p>
       </div>
 
       <!-- Right: info column -->
@@ -385,6 +391,13 @@ const simFailed = ref<Record<number, boolean>>({})
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
   font-size: 10.5px;
   color: var(--text-faint, #5f6570);
+}
+
+.userdata-error {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-danger, #f5a3a3);
 }
 
 .watched-btn:disabled {

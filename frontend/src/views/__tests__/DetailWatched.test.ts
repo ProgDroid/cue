@@ -61,6 +61,16 @@ describe('DetailView — watched/rating store wiring', () => {
     expect(Object.keys(store.ratings)).not.toContain('[object Object]')
   })
 
+  it('surfaces a userDataError from the store near the controls', async () => {
+    const { wrapper, store } = await mountDetail(makeDetail())
+    expect(wrapper.find('[data-test="userdata-error"]').exists()).toBe(false)
+    store.userDataError = 'No IMDb match — rating not saved.'
+    await flushPromises()
+    const el = wrapper.find('[data-test="userdata-error"]')
+    expect(el.exists()).toBe(true)
+    expect(el.text()).toContain('No IMDb match')
+  })
+
   it('disables controls when the title has no imdbId', async () => {
     const { wrapper } = await mountDetail(makeDetail({ imdbId: null }))
     expect(wrapper.find('[data-test="mark-watched"]').attributes('disabled')).toBeDefined()

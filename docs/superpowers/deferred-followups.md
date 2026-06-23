@@ -8,6 +8,73 @@ subagent-driven-development cycle (it is not "planned" until it has its own
 spec/plan). Plan 5 (user-data writes) is the next committed plan and is **not**
 in this backlog.
 
+## Whole-project audit (2026-06-23)
+
+Five parallel specialist agents reviewed security, code quality/tech-debt, the
+data layer, the frontend, and architecture/ops/deps. Verdict: **no Critical
+findings**; the codebase is in good shape. Tier-1 quick wins + Docker hardening
+were fixed on branch `hardening/audit-tier1`; the rest are recorded here.
+
+### ✅ Fixed in this pass (branch `hardening/audit-tier1`)
+- **Image-proxy SSRF/open-redirect hardening** — `serve()` now only 302s a stored
+  art URL when it is `https://` on the MOTN CDN (`is_allowed_redirect`), guards
+  the Plex `plex_path` against traversal/scheme/userinfo smuggling
+  (`is_safe_plex_path`), and fetches Plex art through a shared `reqwest::Client`
+  with a 10s timeout and `redirect::Policy::none()` (was a one-off
+  `reqwest::get` — no timeout, followed redirects). `src/routes/images.rs`.
+- **Latent index panic in `surprise`** — `rmap[ia]`/`rmap[ib]` → `.get().copied().unwrap_or(0.0)`
+  so an embedding that outlived its title degrades instead of panicking.
+  `src/services/ask_engine.rs`.
+- **Sync identity indexes** — migration `0006_identity_indexes.sql` adds
+  non-UNIQUE indexes on `titles(tmdb_id)` + `titles(plex_guid)` (the
+  `find_existing` fallback was full-scanning per upsert).
+- **Silent rating/watched failures** — `DetailView` now renders
+  `store.userDataError` near the controls (the store tracked it but no component
+  showed it; failed writes rolled back with no feedback).
+- **Docker hardening** — non-root `USER cue` owning `/data`, plus a `HEALTHCHECK`
+  hitting `/api/health` so `restart: unless-stopped` can recover a wedged
+  process. *(Image build not verified locally — Docker daemon down; CI builds it.)*
+
+### Open — Tier 2 (solid improvements, lower urgency)
+- **Up-front config validation** — bad `SYNC_CRON`/`BIND_ADDR` fail late with an
+  unnamed `io::Error` after sync starts; validate + log the offending value at boot.
+- **Magic `<= 28` seed sentinel** (`main.rs`) — startup-sync trigger keys off the
+  prototype seed size; derive from a "ever synced OK" check instead.
+- **`isTitle` validator hole** (`api/client.ts`) — omits `imdbId`/`imdb`/`rating`;
+  a bad `imdbId` silently disables rating.
+- **DetailView swallows all errors into "not found"** — distinguish the exported
+  `NotFoundError` from transient errors; offer retry.
+- **A11y cluster** (frontend) — grid/`.sim-card` are non-focusable `<div @click>`;
+  `StarRating` has no ARIA/keyboard semantics; service identity is colour-only;
+  `--text-faint`/`--text-faintest` fail WCAG AA contrast.
+- **`find_existing` TOCTOU** (`sync/store.rs`) — identity read-modify-write outside
+  the tx; safe only because `SyncRunner` serializes writes. Move into the tx or
+  document the single-writer invariant.
+- **`cargo audit`/`cargo deny` in CI** — Trivy scans only the image OS layer;
+  nothing scans the Rust dep tree for RUSTSEC advisories.
+- **Non-root volume caveat** — a fresh named volume inherits the `cue` UID, but an
+  already-root-owned volume from an older deployment needs a one-off `chown`.
+
+### Open — Tier 3 (nits & polish)
+- CI + docker-publish duplicate the test jobs verbatim → reusable `workflow_call`.
+- No operator README (env table, compose quickstart, GHCR image swap, "don't
+  expose past localhost without auth" warning).
+- `sync_runs` unindexed on `source` and grows unbounded (index + prune).
+- Two prune functions (`prune_orphans` vs `_scoped`) — gate the unused one to tests.
+- Plex section-walk duplicated between `fetch`/`fetch_watch_history` → shared helper.
+- Image-proxy `format!`-built SQL → two static strings by `match kind` (confirmed
+  injection-safe; just a smell).
+- `--cols` can flash 1 column on cold first paint; `useVirtualGrid` is the riskiest
+  untested code; `ShimmerGrid` 140px vs grid 158px layout shift; `posterPlaceholder()`
+  called 3× per sim card; redundant `!` in `catalogue.ts`; `Box::leak` in test fakes;
+  ask `ids`/`base_ids` arrays uncapped within the 256KB JSON limit.
+
+### Cross-cutting (informational)
+- All `/api` endpoints are unauthenticated by design (D7, single-user,
+  `127.0.0.1`). The instant cue is exposed beyond localhost, every write/import/
+  sync endpoint becomes an unauthenticated mutator — worth a README warning, not
+  code today.
+
 ## Scale — now live-relevant (catalogue is ~5097 titles, no longer the 28-row seed)
 
 These were noted during Plan 3 as "fine at seed scale, revisit at prod scale."

@@ -261,8 +261,13 @@ impl AskEngine {
                 .filter_map(|id| vmap.get(id).map(|v| (*id, v)))
                 .max_by(|(ia, va), (ib, vb)| {
                     // Compute score in f64 to avoid cast_possible_truncation on rmap values.
-                    let da = (1.0 - f64::from(similarity::cosine(va, &center))) + rmap[ia] / 10.0;
-                    let db = (1.0 - f64::from(similarity::cosine(vb, &center))) + rmap[ib] / 10.0;
+                    // `.get().unwrap_or(0.0)` (not indexing) so an embedding that
+                    // outlived its title degrades instead of panicking — mirrors
+                    // the fallback below.
+                    let da = (1.0 - f64::from(similarity::cosine(va, &center)))
+                        + rmap.get(ia).copied().unwrap_or(0.0) / 10.0;
+                    let db = (1.0 - f64::from(similarity::cosine(vb, &center)))
+                        + rmap.get(ib).copied().unwrap_or(0.0) / 10.0;
                     da.total_cmp(&db)
                 })
                 .map(|(id, _)| id);
@@ -436,6 +441,44 @@ mod tests {
             .unwrap();
             assert!(count > 0, "id {id} kept without a light genre");
         }
+    }
+
+    #[tokio::test]
+    async fn surprise_does_not_panic_on_embedding_without_title() {
+        // Defensive: if an embedding row ever outlives its title (orphan), the
+        // rating lookup in `surprise` must degrade, not panic. FK is normally
+        // enforced, so insert the orphan with foreign_keys OFF on a dedicated
+        // connection to reproduce the drift.
+        let (pool, _dir) = seeded().await;
+        embeddings::upsert(&pool, 1, &[1.0, 0.0, 0.0], EMBED_MODEL)
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("PRAGMA foreign_keys=OFF")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO title_embeddings (title_id, vector, model, dims) VALUES (?, ?, ?, ?)",
+        )
+        .bind(9_999_999_i64)
+        .bind(embeddings::encode(&[0.0, 1.0, 0.0]))
+        .bind(EMBED_MODEL)
+        .bind(3_i64)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query("PRAGMA foreign_keys=ON")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+
+        let engine = AskEngine::new(pool, None, None, None);
+        // Must not panic; returns exactly one pick from the input set.
+        let answer = engine.refine("surprise", &[1, 9_999_999]).await.unwrap();
+        assert_eq!(answer.ids.len(), 1);
+        assert!(answer.ids[0] == 1 || answer.ids[0] == 9_999_999);
     }
 
     #[tokio::test]
