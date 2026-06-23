@@ -113,6 +113,29 @@ live but still working acceptably:
   and that un-watching in Plex clears the cue flag on the next sync.
 - **"Not on your services" discovery row** — open recommendations on the
   retrieval backbone (master spec §11).
+  **Decision 2026-06-23: deferred by choice (won't-build for now; revisit if
+  the need actually surfaces).** Rationale captured during brainstorming so a
+  future session doesn't re-derive it:
+  - It deliberately breaks the load-bearing **D2 boundary** — retrieval finds
+    candidates *from the catalogue* and Claude is server-constrained so it can
+    never surface a non-owned title. That hallucination-proof grounding is a
+    core trust property; this row is the one feature that punches a hole in it.
+  - **Grounded version is disproportionate.** "Not on your services" means real
+    titles on Netflix/Prime/HBO/etc., but the catalogue is sourced only from
+    Disney+/Crunchyroll (`WANTED`) + Plex. Doing it properly means syncing a
+    broad MOTN dataset for all GB services → catalogue bloat (~5k → tens of
+    thousands), MOTN quota burn (the whole incremental-sync feature exists to
+    conserve quota), and OpenAI embedding cost for all of it.
+  - **Cheap version is ungrounded.** The alternative — let Claude free-generate
+    "acclaimed titles like this, not in your library" as an extra `beyond` array
+    on `/api/ask` — can hallucinate and carries no real availability data (we'd
+    only know a pick isn't in the catalogue, not which service it's actually on).
+  - **Weak actionability.** Results are by definition things you can't play; for
+    a personal "what can I watch now" app, surfacing "go buy another sub" is
+    somewhat anti-aligned.
+  - **If revived**, the only proportionate shape is the cheap one: a Claude
+    open-knowledge `beyond` array on `/api/ask`, filtered against the catalogue,
+    rendered as a muted read-only row (no detail page, posters best-effort).
 - **Auth (token/login)** — no-op middleware slot reserved (D7); single-user /
   `127.0.0.1` for now.
 
