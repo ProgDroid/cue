@@ -717,6 +717,8 @@ mod tests {
             genres: vec![],
             cast: vec![],
             services: vec!["disney".into()],
+            poster_url: None,
+            backdrop_url: None,
         }
     }
 
