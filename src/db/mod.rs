@@ -1,5 +1,6 @@
 pub mod catalogue;
 pub mod embeddings;
+pub mod motn_cache;
 pub mod seed;
 pub mod sync_runs;
 pub mod user_data;
