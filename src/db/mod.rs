@@ -57,6 +57,8 @@ mod tests {
                 .unwrap();
 
         for expected in [
+            "motn_catalog_cache",
+            "sync_runs",
             "title_cast",
             "title_embeddings",
             "title_genres",
@@ -64,7 +66,6 @@ mod tests {
             "titles",
             "user_ratings",
             "watch_history",
-            "sync_runs",
         ] {
             assert!(
                 names.contains(&expected.to_string()),
