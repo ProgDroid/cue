@@ -9,7 +9,7 @@ use sqlx::SqlitePool;
 use crate::db::motn_cache::CachedTitle;
 use crate::db::{motn_cache, sync_runs};
 use crate::models::{Service, TitleKind};
-use crate::sync::{CatalogueSource, FetchedTitle};
+use crate::sync::{CatalogueSource, FetchedTitle, ImageRef};
 
 const MOTN_BASE: &str = "https://api.movieofthenight.com/v4";
 
@@ -112,6 +112,8 @@ struct Show {
     // Per-country streaming availability; each option names the `service` it's on.
     #[serde(default)]
     streaming_options: HashMap<String, Vec<StreamOption>>,
+    #[serde(default)]
+    image_set: Option<ImageSet>,
 }
 
 #[derive(Deserialize)]
@@ -127,6 +129,28 @@ struct ServiceRef {
 #[derive(Deserialize)]
 struct Named {
     name: String,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct ImageSet {
+    #[serde(default)]
+    vertical_poster: HashMap<String, String>,
+    #[serde(default)]
+    horizontal_poster: HashMap<String, String>,
+}
+
+/// Documented MOTN vertical poster sizes, most-preferred first.
+const POSTER_SIZES: &[&str] = &["w480", "w360", "w600", "w240", "w720"];
+/// Horizontal sizes for the backdrop, most-preferred first.
+const BACKDROP_SIZES: &[&str] = &["w1080", "w720", "w600", "w480", "w360", "w240"];
+
+/// Pick the first available size from `prefer`, as a remote `ImageRef`.
+fn pick_size(m: &HashMap<String, String>, prefer: &[&str]) -> Option<ImageRef> {
+    prefer.iter().find_map(|k| m.get(*k)).map(|value| ImageRef {
+        value: value.clone(),
+        remote: true,
+    })
 }
 
 /// Map one MOTN show into a `FetchedTitle`, attributing only the wanted services
@@ -160,6 +184,14 @@ fn show_to_fetched(s: Show, country: &str, services: &[Service]) -> FetchedTitle
             attributed
         }
     };
+    let poster = s
+        .image_set
+        .as_ref()
+        .and_then(|set| pick_size(&set.vertical_poster, POSTER_SIZES));
+    let backdrop = s
+        .image_set
+        .as_ref()
+        .and_then(|set| pick_size(&set.horizontal_poster, BACKDROP_SIZES));
     FetchedTitle {
         imdb_id: s.imdb_id,
         tmdb_id: s.tmdb_id,
@@ -173,8 +205,8 @@ fn show_to_fetched(s: Show, country: &str, services: &[Service]) -> FetchedTitle
         genres: s.genres.into_iter().map(|g| g.name).collect(),
         cast: s.cast,
         services: svcs,
-        poster: None,
-        backdrop: None,
+        poster,
+        backdrop,
     }
 }
 
@@ -565,6 +597,38 @@ mod tests {
         let json = r#"{ "shows": [ { "title": "X", "showType": "movie" } ], "hasMore": false }"#;
         let (titles, _) = parse_page(json, "gb", &[Service::Disney]).unwrap();
         assert_eq!(titles[0].services, vec![Service::Disney]);
+    }
+
+    #[test]
+    fn parse_page_extracts_image_set() {
+        let json = r#"{
+          "shows": [{
+            "id": "1", "imdbId": "tt1", "title": "X", "showType": "movie",
+            "releaseYear": 2020,
+            "imageSet": {
+              "verticalPoster": { "w240": "https://cdn/v240.jpg", "w480": "https://cdn/v480.jpg" },
+              "horizontalPoster": { "w1080": "https://cdn/h1080.jpg" }
+            },
+            "streamingOptions": {}
+          }],
+          "hasMore": false
+        }"#;
+        let (titles, _) = parse_page(json, "gb", &[Service::Disney]).unwrap();
+        let t = &titles[0];
+        let p = t.poster.as_ref().unwrap();
+        assert!(p.remote);
+        assert_eq!(p.value, "https://cdn/v480.jpg"); // w480 preferred
+        let b = t.backdrop.as_ref().unwrap();
+        assert!(b.remote);
+        assert_eq!(b.value, "https://cdn/h1080.jpg");
+    }
+
+    #[test]
+    fn parse_page_handles_missing_image_set() {
+        let json = r#"{"shows":[{"id":"1","imdbId":"tt1","title":"X","showType":"movie","releaseYear":2020,"streamingOptions":{}}],"hasMore":false}"#;
+        let (titles, _) = parse_page(json, "gb", &[Service::Disney]).unwrap();
+        assert!(titles[0].poster.is_none());
+        assert!(titles[0].backdrop.is_none());
     }
 
     #[test]
