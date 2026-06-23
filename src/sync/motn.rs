@@ -174,6 +174,9 @@ fn show_to_fetched(s: Show, country: &str, services: &[Service]) -> FetchedTitle
     }
 }
 
+/// `(show_id, title)` pairs from one search page, used to seed the cache.
+type PageEntry = (String, FetchedTitle);
+
 /// Parse one search page into `(titles, next_cursor)`. (Kept for callers/tests;
 /// delegates to `parse_page_entries` and drops the show ids.)
 ///
@@ -185,33 +188,25 @@ pub fn parse_page(
     services: &[Service],
 ) -> anyhow::Result<(Vec<FetchedTitle>, Option<String>)> {
     let (entries, cursor) = parse_page_entries(json, country, services)?;
-    let titles = entries
-        .into_iter()
-        .map(|(_, ct)| ct.into_fetched())
-        .collect();
+    let titles = entries.into_iter().map(|(_, ft)| ft).collect();
     Ok((titles, cursor))
 }
 
-/// Parse one search page into `((show_id, CachedTitle), next_cursor)` for seeding
+/// Parse one search page into `((show_id, FetchedTitle), next_cursor)` for seeding
 /// the cache.
 ///
 /// # Errors
 /// Returns an error if the JSON does not match the expected shape.
-#[allow(clippy::type_complexity)]
 pub fn parse_page_entries(
     json: &str,
     country: &str,
     services: &[Service],
-) -> anyhow::Result<(Vec<(String, CachedTitle)>, Option<String>)> {
+) -> anyhow::Result<(Vec<PageEntry>, Option<String>)> {
     let page: Page = serde_json::from_str(json)?;
     let entries = page
         .shows
         .into_iter()
-        .map(|s| {
-            let id = s.id.clone();
-            let ft = show_to_fetched(s, country, services);
-            (id, CachedTitle::from(&ft))
-        })
+        .map(|s| (s.id.clone(), show_to_fetched(s, country, services)))
         .collect();
     let cursor = if page.has_more {
         page.next_cursor
@@ -448,7 +443,7 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, "100");
         assert_eq!(entries[0].1.title, "A");
-        assert_eq!(entries[0].1.services, vec!["disney".to_string()]);
+        assert_eq!(entries[0].1.services, vec![Service::Disney]);
     }
 
     #[test]
