@@ -29,7 +29,7 @@ impl Kind {
 
 const CACHE: (&str, &str) = ("Cache-Control", "public, max-age=86400");
 
-async fn serve(id: i64, kind: Kind, pool: &SqlitePool, plex: &PlexArt) -> HttpResponse {
+async fn serve(id: i64, kind: Kind, pool: &SqlitePool, art: &PlexArt) -> HttpResponse {
     let (url_col, plex_col) = kind.columns();
     let sql = format!("SELECT {url_col}, {plex_col} FROM titles WHERE id = ?");
     let row = sqlx::query_as::<_, (Option<String>, Option<String>)>(&sql)
@@ -50,7 +50,7 @@ async fn serve(id: i64, kind: Kind, pool: &SqlitePool, plex: &PlexArt) -> HttpRe
     let Some(path) = plex_path else {
         return HttpResponse::NotFound().finish();
     };
-    let (Some(base), Some(token)) = (plex.base_url.as_ref(), plex.token.as_ref()) else {
+    let (Some(base), Some(token)) = (art.base_url.as_ref(), art.token.as_ref()) else {
         return HttpResponse::NotFound().finish();
     };
     let upstream = format!(
@@ -77,7 +77,15 @@ async fn serve(id: i64, kind: Kind, pool: &SqlitePool, plex: &PlexArt) -> HttpRe
                 },
             )
         }
-        _ => HttpResponse::BadGateway().finish(),
+        Ok(resp) => {
+            tracing::warn!("Plex art upstream returned status {}", resp.status());
+            HttpResponse::BadGateway().finish()
+        }
+        Err(e) => {
+            // .without_url() strips the upstream URL — which carries the X-Plex-Token — from the error.
+            tracing::warn!("Plex art upstream request failed: {}", e.without_url());
+            HttpResponse::BadGateway().finish()
+        }
     }
 }
 
@@ -162,6 +170,7 @@ mod tests {
 
     #[actix_web::test]
     async fn missing_title_is_404() {
+        // DB row absent (unknown id) -> 404
         let (pool, _dir, _id) = pool_with_title(None, None).await;
         let app = test::init_service(
             App::new()
@@ -182,6 +191,7 @@ mod tests {
 
     #[actix_web::test]
     async fn title_without_art_is_404() {
+        // DB row present but both image columns NULL -> 404
         let (pool, _dir, id) = pool_with_title(None, None).await;
         let app = test::init_service(
             App::new()
