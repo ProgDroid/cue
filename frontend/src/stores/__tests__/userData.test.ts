@@ -49,4 +49,22 @@ describe('catalogue store — user-data actions', () => {
     expect(store.ratingOf(5)).toBeNull()
     expect(clearRating).toHaveBeenCalledWith(5)
   })
+
+  it('clearRating rolls back and records error on failure', async () => {
+    vi.mocked(clearRating).mockRejectedValue(new Error('fail'))
+    const store = useCatalogueStore()
+    store.ratings[5] = 9
+    await store.clearRating(5)
+    expect(store.ratingOf(5)).toBe(9) // restored
+    expect(store.userDataError).toBe('fail')
+  })
+
+  it('setRating rollback on an unrated title removes the key (delete branch)', async () => {
+    vi.mocked(setRating).mockRejectedValue(new Error('x'))
+    const store = useCatalogueStore()
+    // no prior rating for id 7
+    await store.setRating(7, 8)
+    expect(store.ratingOf(7)).toBeNull() // key deleted, not left at optimistic 8
+    expect(store.userDataError).toBe('x')
+  })
 })

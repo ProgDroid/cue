@@ -66,7 +66,6 @@ onMounted(() => {
           <div class="poster-motif" :style="{ background: ph.motif }" />
           <div class="poster-mono" :style="{ color: ph.glyphColor }">{{ mono }}</div>
         </div>
-        <!-- Writes below are local only — persistence is Plan 5 -->
 
         <!-- Mark as watched button -->
         <button

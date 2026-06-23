@@ -63,5 +63,6 @@ describe('DetailView — watched/rating store wiring', () => {
     const { wrapper } = await mountDetail(makeTitle({ imdbId: null }))
     expect(wrapper.find('[data-test="mark-watched"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('[data-test="star"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.no-imdb-hint').exists()).toBe(true)
   })
 })
