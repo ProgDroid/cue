@@ -32,12 +32,28 @@ live but still working acceptably:
   now persist (optimistic + rollback). Rating scale widened 1–5 → **1–10**
   (migration `0002`), so the IMDb/Plex ratings imports below are now **lossless**
   (no downscaling). See spec `2026-06-23-cue-user-data-writes-design.md`.
-- **Real poster artwork — now actionable.** MOTN show objects carry an
-  `imageSet` with poster URLs (`verticalPoster.w240..w720`,
-  `horizontalPoster`, backdrops); Plex items carry `thumb`/`art`. Capture an
-  artwork URL during sync and wire `<img>` in the grid/detail, replacing the
-  generated oklch placeholder (master spec §11). Needs a `titles` column (or a
-  small `title_images` table) + sync mapping + frontend.
+- ✅ **Real poster artwork — DONE & merged 2026-06-23** (branch
+  `feat/poster-artwork`). 4 nullable image columns added to `titles` via
+  migration `0004` (`poster_url`, `backdrop_url`, `poster_path`, `backdrop_path`);
+  MOTN `imageSet` (`verticalPoster.*`, `horizontalBackdrop.*`) and Plex
+  `thumb`/`art` captured during sync via `parse_page` / `parse_section`;
+  `GET /api/titles/:id/poster` and `GET /api/titles/:id/backdrop` proxy endpoints
+  (302 to MOTN CDN for public URLs; buffered token-streamed proxy for Plex paths;
+  404 when art is absent so the frontend falls back to the oklch placeholder);
+  `<img>` overlay + `v-show` in grid cards, `DetailView` hero + similar-title
+  thumbs — placeholder is always the base layer and degrades gracefully on
+  network error. See spec `docs/superpowers/specs/2026-06-23-cue-poster-artwork-design.md`
+  and plan `docs/superpowers/plans/2026-06-23-poster-artwork.md`.
+- **Real poster artwork — live-verify (post-merge):** (a) pick a MOTN title and
+  confirm `GET /api/titles/:id/poster` returns a 302 that resolves to a working
+  `cdn.movieofthenight.com` URL; (b) pick a Plex-only title and confirm its
+  poster streams through the backend with no Plex token visible in the
+  client-side network request URL; (c) spot-check the grid and a detail page —
+  real art should render for MOTN/Plex-backed titles; oklch placeholder should
+  appear only where art is genuinely absent; (d) confirm the exact size-key
+  names used by MOTN `imageSet` against a real `/shows` response and capture a
+  `parse_page` fixture to lock the parser to live data (deferred from Task 4 —
+  no MOTN key in the build env).
 - **IMDb ratings-export import** → `user_ratings` (schema ready & now 1–10 so
   imports are lossless; importer UI deferred — master spec §11).
 - **Plex watch-history import** → `watch_history` (schema ready — master spec
