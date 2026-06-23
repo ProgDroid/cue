@@ -2,15 +2,16 @@ use std::collections::{HashMap, HashSet};
 
 use sqlx::SqlitePool;
 
-use crate::models::{Service, TitleDto, TitleKind, TitleRow};
+use crate::models::{Service, TitleKind, TitleListItem, TitleListRow};
 
-/// Fetch every title fully hydrated with services, genres, cast, and user data.
+/// Fetch every title in the slim list shape (services, genres, user-data; no
+/// `desc`/`cast`).
 ///
 /// # Errors
 /// Returns an error if any database query fails.
-pub async fn fetch_catalogue(pool: &SqlitePool) -> anyhow::Result<Vec<TitleDto>> {
-    let rows: Vec<TitleRow> = sqlx::query_as(
-        "SELECT id, imdb_id, title, year, type, imdb_rating, length, description
+pub async fn fetch_catalogue(pool: &SqlitePool) -> anyhow::Result<Vec<TitleListItem>> {
+    let rows: Vec<TitleListRow> = sqlx::query_as(
+        "SELECT id, imdb_id, title, year, type, imdb_rating, length
          FROM titles ORDER BY id",
     )
     .fetch_all(pool)
@@ -37,16 +38,6 @@ pub async fn fetch_catalogue(pool: &SqlitePool) -> anyhow::Result<Vec<TitleDto>>
         genre_map.entry(tid).or_default().push(g);
     }
 
-    let cast = sqlx::query_as::<_, (i64, String)>(
-        "SELECT title_id, person FROM title_cast ORDER BY title_id, ord",
-    )
-    .fetch_all(pool)
-    .await?;
-    let mut cast_map: HashMap<i64, Vec<String>> = HashMap::new();
-    for (tid, person) in cast {
-        cast_map.entry(tid).or_default().push(person);
-    }
-
     let ratings = sqlx::query_as::<_, (String, i64)>("SELECT imdb_id, rating FROM user_ratings")
         .fetch_all(pool)
         .await?;
@@ -63,7 +54,7 @@ pub async fn fetch_catalogue(pool: &SqlitePool) -> anyhow::Result<Vec<TitleDto>>
         let (watched, rating) = r.imdb_id.as_ref().map_or((false, None), |key| {
             (watched_set.contains(key), rating_map.get(key).copied())
         });
-        out.push(TitleDto {
+        out.push(TitleListItem {
             id: r.id,
             imdb_id: r.imdb_id,
             title: r.title,
@@ -73,8 +64,6 @@ pub async fn fetch_catalogue(pool: &SqlitePool) -> anyhow::Result<Vec<TitleDto>>
             genres: genre_map.remove(&r.id).unwrap_or_default(),
             imdb: r.imdb_rating,
             len: r.length,
-            desc: r.description,
-            cast: cast_map.remove(&r.id).unwrap_or_default(),
             watched,
             rating,
         });

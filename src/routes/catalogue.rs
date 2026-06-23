@@ -51,5 +51,13 @@ mod tests {
         assert!(first["type"] == "movie" || first["type"] == "series");
         assert!(first["services"].is_array());
         assert!(first["genres"].is_array());
+        assert!(
+            first.get("desc").is_none(),
+            "list payload must not carry desc"
+        );
+        assert!(
+            first.get("cast").is_none(),
+            "list payload must not carry cast"
+        );
     }
 }
