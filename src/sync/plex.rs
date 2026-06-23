@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use crate::models::{Service, TitleKind};
-use crate::sync::{CatalogueSource, FetchedTitle, ImageRef};
+use crate::sync::{CatalogueSource, FetchedTitle, ImageRef, WatchRecord};
 
 #[derive(Deserialize)]
 struct Container {
@@ -27,6 +27,12 @@ struct Meta {
     art: Option<String>,
     rating: Option<f64>,
     duration: Option<i64>,
+    #[serde(rename = "viewCount")]
+    view_count: Option<i64>,
+    #[serde(rename = "lastViewedAt")]
+    last_viewed_at: Option<i64>,
+    #[serde(rename = "viewedLeafCount")]
+    viewed_leaf_count: Option<i64>,
     #[serde(default, rename = "Guid")]
     guid: Vec<Tagged>,
     #[serde(default, rename = "Genre")]
@@ -105,6 +111,39 @@ pub fn parse_section(json: &str) -> anyhow::Result<Vec<FetchedTitle>> {
         .collect())
 }
 
+/// Parse one `/library/sections/{key}/all` body into watched-title records.
+///
+/// A movie is "watched" when `viewCount > 0`; a show is "watched" (touched /
+/// in-progress) when `viewedLeafCount > 0`. Items without an `imdb://` GUID are
+/// skipped — user-data is keyed on `imdb_id` (D6), so a non-imdb watch row
+/// would never surface in the catalogue read.
+///
+/// # Errors
+/// Returns an error if the JSON does not match the expected shape.
+pub fn parse_watch_history(json: &str) -> anyhow::Result<Vec<WatchRecord>> {
+    let parsed: Container = serde_json::from_str(json)?;
+    Ok(parsed
+        .media_container
+        .metadata
+        .into_iter()
+        .filter_map(|m| {
+            let watched = match m.kind.as_str() {
+                "movie" => m.view_count.unwrap_or(0) > 0,
+                "show" => m.viewed_leaf_count.unwrap_or(0) > 0,
+                _ => false,
+            };
+            if !watched {
+                return None;
+            }
+            let key = guid_value(&m.guid, "imdb")?; // skip no-imdb items (W3)
+            Some(WatchRecord {
+                key,
+                watched_at: m.last_viewed_at,
+            })
+        })
+        .collect())
+}
+
 /// Live Plex client (raw HTTP — fetches sections then items).
 pub struct PlexClient {
     client: reqwest::Client,
@@ -172,6 +211,24 @@ impl CatalogueSource for PlexClient {
                     .get_json(&format!("/library/sections/{}/all", dir.key))
                     .await?;
                 out.extend(parse_section(&body)?);
+            }
+        }
+        Ok(out)
+    }
+
+    fn watch_history_source(&self) -> Option<&'static str> {
+        Some("plex")
+    }
+
+    async fn fetch_watch_history(&self) -> anyhow::Result<Vec<WatchRecord>> {
+        let sections: Sections = serde_json::from_str(&self.get_json("/library/sections").await?)?;
+        let mut out = Vec::new();
+        for dir in sections.media_container.directory {
+            if dir.kind == "movie" || dir.kind == "show" {
+                let body = self
+                    .get_json(&format!("/library/sections/{}/all", dir.key))
+                    .await?;
+                out.extend(parse_watch_history(&body)?);
             }
         }
         Ok(out)
@@ -253,5 +310,30 @@ mod tests {
         assert_eq!(out[0].kind, TitleKind::Movie);
         assert_eq!(out[1].title, "A Series");
         assert_eq!(out[1].kind, TitleKind::Series);
+    }
+
+    #[test]
+    fn parse_watch_history_keeps_watched_movies_and_inprogress_shows() {
+        let json = r#"{"MediaContainer":{"Metadata":[
+          {"type":"movie","title":"Watched Film","viewCount":1,"lastViewedAt":1600000000,
+           "Guid":[{"id":"imdb://tt1"}]},
+          {"type":"movie","title":"Unwatched Film","viewCount":0,
+           "Guid":[{"id":"imdb://tt2"}]},
+          {"type":"movie","title":"Never-Played Film",
+           "Guid":[{"id":"imdb://tt3"}]},
+          {"type":"show","title":"In-Progress Show","viewedLeafCount":4,"lastViewedAt":1700000000,
+           "Guid":[{"id":"imdb://tt4"}]},
+          {"type":"show","title":"Untouched Show","viewedLeafCount":0,
+           "Guid":[{"id":"imdb://tt5"}]},
+          {"type":"movie","title":"Watched No IMDb","viewCount":2,
+           "Guid":[{"id":"tmdb://999"}]}
+        ]}}"#;
+        let out = parse_watch_history(json).unwrap();
+        // Watched movie (tt1) + in-progress show (tt4) only. tt2/tt3/tt5 not watched;
+        // the no-imdb watched item is skipped (W3).
+        let keys: Vec<&str> = out.iter().map(|r| r.key.as_str()).collect();
+        assert_eq!(keys, vec!["tt1", "tt4"]);
+        assert_eq!(out[0].watched_at, Some(1_600_000_000));
+        assert_eq!(out[1].watched_at, Some(1_700_000_000));
     }
 }

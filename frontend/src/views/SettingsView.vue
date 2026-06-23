@@ -78,11 +78,18 @@ const importError = ref('')
 
 async function refresh() {
   try {
+    const wasRunning = busy.value
     status.value = await getSyncStatus()
     busy.value = status.value.running
     if (!status.value.running && poll) {
       clearInterval(poll)
       poll = undefined
+    }
+    // A sync just finished (running -> not running): reload the catalogue so
+    // newly-synced titles and imported watched flags surface without a reload.
+    // Store accessed lazily so non-Pinia test mounts are unaffected.
+    if (wasRunning && !status.value.running) {
+      await useCatalogueStore().load()
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'failed to load status'
