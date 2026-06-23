@@ -102,19 +102,20 @@ All non-blocking; the whole-branch review verdict was "Ready to merge".
 
 ## MOTN incremental sync — post-merge verification (Plan Feat/motn-incremental-sync)
 
-- **MOTN incremental sync — live verify (post-merge):** On the server, run one sync
-  with a non-empty cache and confirm logs show `MOTN delta: +N -M` (not a full seed),
-  and that the monthly request counter increments by only a few. Capture a real
-  `/changes` response as a fixture and confirm the embedded `shows` map carries
-  `id`/`imdbId`/`streamingOptions` (spec §12 assumption). If `shows` is an array, not
-  a map, adjust `ChangesPage.shows` to `Vec<Show>` keyed via each show's `id`.
-  Also confirm the embedded shows carry `streamingOptions[gb]`: in delta mode
-  `show_to_fetched` is called with the full resolved set `[Disney, Crunchyroll]`, so a
-  `new` show that omits `streamingOptions` hits the fallback and is tagged with BOTH
-  services instead of the one it's actually on (bounded; a recovery re-seed corrects it).
-  If embedded shows lack `streamingOptions`, attribute `new` deltas from the per-change
-  `service` field (`ChangeEntry`, spec §3) instead of the searched set, and add the
-  captured fixture as a `parse_changes` test asserting per-service attribution (so the
-  delta path gets the seed path's coverage).
+- **MOTN incremental sync — spec §12 assumption RESOLVED via docs (2026-06-23):**
+  Validated against https://docs.movieofthenight.com/resource/changes — the `/changes`
+  `200` response is `{ changes[] (25 items), shows{} (25 keys, map keyed by showId),
+  hasMore, nextCursor }`. So `shows` IS a map (our `ChangesPage.shows: HashMap<String,
+  Show>` is correct — no `Vec<Show>` change needed). The Show object (per
+  /resource/shows) carries `id`, `imdbId`, and `streamingOptions`, and the embedded
+  `/changes` shows are full Show objects — so `show_to_fetched` attributes a `new`
+  title from its real `streamingOptions[gb]`; the both-services fallback only triggers
+  if availability is entirely absent, which does not occur for a real embedded show.
+  The final-review attribution concern is therefore moot in practice. No code change.
+- **MOTN incremental sync — operational live-verify (post-merge, when convenient):**
+  Only an operational confirmation remains (no correctness risk): on the server, run one
+  sync with a non-empty cache and confirm logs show `MOTN delta: +N -M` (not a full
+  seed) and that the monthly request counter rises by only a few. Optionally capture a
+  real `/changes` response as a `parse_changes` fixture to lock the parser to live data.
 - **MOTN cache state in settings UI (deferred):** `/api/sync/status` could surface
   cache size + last seed vs delta mode. Out of scope for the incremental-sync plan.
