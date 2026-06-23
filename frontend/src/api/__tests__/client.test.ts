@@ -44,4 +44,19 @@ describe('api client', () => {
     vi.stubGlobal('fetch', mockFetch(200, { id: 1 }))
     await expect(getTitle(1)).rejects.toThrow(/invalid/)
   })
+
+  it('getCatalogue throws when the body is not an array', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, {}))
+    await expect(getCatalogue()).rejects.toThrow(/array|invalid/i)
+  })
+
+  it('getCatalogue throws when an item is missing required fields', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, [{ id: 1 }]))
+    await expect(getCatalogue()).rejects.toThrow(/invalid|title/i)
+  })
+
+  it('getCatalogue throws on non-OK response', async () => {
+    vi.stubGlobal('fetch', mockFetch(500, null))
+    await expect(getCatalogue()).rejects.toThrow(/HTTP 500/)
+  })
 })
