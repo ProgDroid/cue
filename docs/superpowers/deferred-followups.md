@@ -35,39 +35,37 @@ were fixed on branch `hardening/audit-tier1`; the rest are recorded here.
   hitting `/api/health` so `restart: unless-stopped` can recover a wedged
   process. *(Image build not verified locally — Docker daemon down; CI builds it.)*
 
-### Open — Tier 2 (solid improvements, lower urgency)
-- **Up-front config validation** — bad `SYNC_CRON`/`BIND_ADDR` fail late with an
-  unnamed `io::Error` after sync starts; validate + log the offending value at boot.
-- **Magic `<= 28` seed sentinel** (`main.rs`) — startup-sync trigger keys off the
-  prototype seed size; derive from a "ever synced OK" check instead.
-- **`isTitle` validator hole** (`api/client.ts`) — omits `imdbId`/`imdb`/`rating`;
-  a bad `imdbId` silently disables rating.
-- **DetailView swallows all errors into "not found"** — distinguish the exported
-  `NotFoundError` from transient errors; offer retry.
-- **A11y cluster** (frontend) — grid/`.sim-card` are non-focusable `<div @click>`;
-  `StarRating` has no ARIA/keyboard semantics; service identity is colour-only;
-  `--text-faint`/`--text-faintest` fail WCAG AA contrast.
-- **`find_existing` TOCTOU** (`sync/store.rs`) — identity read-modify-write outside
-  the tx; safe only because `SyncRunner` serializes writes. Move into the tx or
-  document the single-writer invariant.
-- **`cargo audit`/`cargo deny` in CI** — Trivy scans only the image OS layer;
-  nothing scans the Rust dep tree for RUSTSEC advisories.
-- **Non-root volume caveat** — a fresh named volume inherits the `cue` UID, but an
-  already-root-owned volume from an older deployment needs a one-off `chown`.
+### ✅ Tier 2 + Tier 3 — DONE 2026-06-23 (branch `hardening/audit-tier1`)
+All cleared except two items deliberately left (see "Deferred" below).
+- ✅ Up-front config validation (`Config::validate` — bad `BIND_ADDR`/`SYNC_CRON`
+  fail at boot naming the value).
+- ✅ Magic `<= 28` seed sentinel → `sync_runs::any_sync_ok()`.
+- ✅ `isTitle` validates `imdbId`/`imdb`/`rating`.
+- ✅ DetailView distinguishes `NotFoundError` from transient errors (+ retry).
+- ✅ A11y: focusable grid/sim cards + focus rings + Enter/Space; labelled service
+  dots, IMDb/watched badges; `StarRating` group + per-star labels + `aria-pressed`.
+- ✅ `find_existing` moved into the upsert transaction (TOCTOU closed).
+- ✅ `cargo audit` job added (reusable `tests.yml`, advisory-visibility).
+- ✅ Non-root volume caveat documented (README).
+- ✅ CI deduped into reusable `tests.yml` (called by `ci.yml` + `docker-publish.yml`).
+- ✅ Operator `README.md` written (env table, compose quickstart, GHCR swap, auth warning).
+- ✅ `sync_runs(source)` indexed (migration 0007) + `prune_old_runs` keeps newest 100/source.
+- ✅ Unused `prune_orphans` gated to `#[cfg(test)]`.
+- ✅ Plex section-walk extracted to `for_each_section`.
+- ✅ Image-proxy SQL made static (`Kind::select_sql`).
+- ✅ `ShimmerGrid` uses 158px min column; `posterPlaceholder` precomputed per sim
+  card; redundant `!` removed; `ResizeObserver entries[0]` guarded; `useVirtualGrid`
+  now has direct tests; ask `ids`/`baseIds` capped at 1000.
 
-### Open — Tier 3 (nits & polish)
-- CI + docker-publish duplicate the test jobs verbatim → reusable `workflow_call`.
-- No operator README (env table, compose quickstart, GHCR image swap, "don't
-  expose past localhost without auth" warning).
-- `sync_runs` unindexed on `source` and grows unbounded (index + prune).
-- Two prune functions (`prune_orphans` vs `_scoped`) — gate the unused one to tests.
-- Plex section-walk duplicated between `fetch`/`fetch_watch_history` → shared helper.
-- Image-proxy `format!`-built SQL → two static strings by `match kind` (confirmed
-  injection-safe; just a smell).
-- `--cols` can flash 1 column on cold first paint; `useVirtualGrid` is the riskiest
-  untested code; `ShimmerGrid` 140px vs grid 158px layout shift; `posterPlaceholder()`
-  called 3× per sim card; redundant `!` in `catalogue.ts`; `Box::leak` in test fakes;
-  ask `ids`/`base_ids` arrays uncapped within the 256KB JSON limit.
+**Deferred (deliberate):**
+- **Faint-token WCAG-AA contrast** — raising `--text-faint`/`--text-faintest` to AA
+  would collapse them into `--text-muted` and flatten the intended type hierarchy.
+  Left as-is for these small decorative mono captions; revisit if AA compliance is
+  required (a design call).
+- **`--cols` cold-first-paint flash** — can momentarily show 1 column before the
+  ResizeObserver corrects within a frame. Accepted (self-heals); gating render on
+  `containerWidth > 0` would trade it for a blank frame.
+- `Box::leak` in the sync test fakes — harmless test-only artifact; left.
 
 ### Cross-cutting (informational)
 - All `/api` endpoints are unauthenticated by design (D7, single-user,

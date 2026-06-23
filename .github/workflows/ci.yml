@@ -1,9 +1,9 @@
 name: CI
 
 # Pull-request gate. Push-to-main is gated by docker-publish.yml (which also
-# builds + publishes the image); PRs run no CI without this workflow. Mirrors
-# the backend + frontend test gates from docker-publish.yml, minus the
-# build-and-push job — PRs are validated, not published.
+# builds + publishes the image); PRs run no CI without this workflow. Both
+# delegate the actual backend + frontend + audit jobs to the reusable
+# tests.yml so the gates live in exactly one place.
 
 on:
   pull_request:
@@ -15,57 +15,6 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Actions are pinned to commit SHAs (version in the comment), matching
-# docker-publish.yml. Keep the two files' pins in lockstep when bumping.
 jobs:
-  backend:
-    name: Backend tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
-        with:
-          toolchain: stable
-          components: clippy
-
-      - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
-
-      # cue's lint policy lives in Cargo.toml's [lints.clippy] table — the gate
-      # is just `-D warnings`; clippy --all-targets also type-checks the tests.
-      - name: Clippy (deny warnings)
-        run: cargo clippy --all-targets -- -D warnings
-
-      - name: Tests
-        run: cargo test
-
-  frontend:
-    name: Frontend tests
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-
-      - name: Setup Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      # The committed package-lock.json is Linux-flavoured, so `npm ci` (strict)
-      # works in CI — this is the consumer the lock was regenerated for.
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Type-check + build
-        run: npm run build
-
-      - name: Unit tests
-        run: npm test
+  tests:
+    uses: ./.github/workflows/tests.yml
