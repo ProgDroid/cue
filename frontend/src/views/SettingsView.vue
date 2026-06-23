@@ -40,6 +40,19 @@
         <p class="muted">{{ status.catalogue.movies }} movies · {{ status.catalogue.series }} series</p>
         <p class="muted">{{ status.catalogue.embedded }} embedded</p>
       </div>
+
+      <div class="card">
+        <h2>Import IMDb ratings</h2>
+        <input
+          type="file"
+          accept=".csv"
+          data-test="imdb-file"
+          :disabled="importing"
+          @change="onImportFile"
+        />
+        <p v-if="importMsg" class="muted" data-test="imdb-result">{{ importMsg }}</p>
+        <p v-if="importError" class="settings__error">{{ importError }}</p>
+      </div>
     </div>
 
     <p v-if="error" class="settings__error">{{ error }}</p>
@@ -51,12 +64,17 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { triggerSync, getSyncStatus } from '@/api/sync'
 import type { SyncStatus } from '@/types'
+import { importRatings } from '@/api/userData'
+import { useCatalogueStore } from '@/stores/catalogue'
 
 const status = ref<SyncStatus | null>(null)
 const busy = ref(false)
 const message = ref('')
 const error = ref('')
 let poll: ReturnType<typeof setInterval> | undefined
+const importing = ref(false)
+const importMsg = ref('')
+const importError = ref('')
 
 async function refresh() {
   try {
@@ -84,6 +102,29 @@ async function onSync() {
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'failed to start sync'
     busy.value = false
+  }
+}
+
+async function onImportFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  importing.value = true
+  importMsg.value = ''
+  importError.value = ''
+  try {
+    const csv = await file.text()
+    const r = await importRatings(csv)
+    importMsg.value = `Imported ${r.imported} ratings · ${r.matched} in your library · ${r.skipped} rows skipped`
+    // Re-fetch so imported ratings surface without a manual reload.
+    // Store accessed lazily here (not at setup) so tests that mount without
+    // Pinia are unaffected.
+    await useCatalogueStore().load()
+  } catch (err) {
+    importError.value = err instanceof Error ? err.message : 'Import failed.'
+  } finally {
+    importing.value = false
+    input.value = '' // allow re-selecting the same file
   }
 }
 
