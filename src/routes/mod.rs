@@ -1,6 +1,7 @@
 pub mod ask;
 pub mod catalogue;
 pub mod sync;
+pub mod user_data;
 
 use actix_web::{web, HttpResponse};
 
@@ -17,6 +18,15 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/ask/similar", web::post().to(ask::similar))
             .route("/ask/refine", web::post().to(ask::refine))
             .route("/sync", web::post().to(sync::trigger))
-            .route("/sync/status", web::get().to(sync::status)),
+            .route("/sync/status", web::get().to(sync::status))
+            .route("/titles/{id}/rating", web::put().to(user_data::set_rating))
+            .route(
+                "/titles/{id}/rating",
+                web::delete().to(user_data::clear_rating),
+            )
+            .route(
+                "/titles/{id}/watched",
+                web::put().to(user_data::set_watched),
+            ),
     );
 }
