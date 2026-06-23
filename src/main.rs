@@ -114,6 +114,11 @@ async fn main() -> std::io::Result<()> {
     scheduler.add(job).await.map_err(std::io::Error::other)?;
     scheduler.start().await.map_err(std::io::Error::other)?;
 
+    let plex_art = cue::routes::images::PlexArt {
+        base_url: cfg.plex_url.clone(),
+        token: cfg.plex_token.clone(),
+    };
+
     let static_dir = cfg.static_dir.clone();
     let bind_addr = cfg.bind_addr.clone();
     tracing::info!("listening on {bind_addr}");
@@ -123,6 +128,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(engine.clone()))
             .app_data(web::Data::new(runner.clone()))
+            .app_data(web::Data::new(plex_art.clone()))
             .app_data(web::Data::new(StaticDir(static_dir.clone())))
             .configure(cue::routes::configure)
             // The `/api` scope is matched first; everything else (real assets

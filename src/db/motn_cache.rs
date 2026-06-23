@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 use crate::models::{Service, TitleKind};
-use crate::sync::FetchedTitle;
+use crate::sync::{FetchedTitle, ImageRef};
 
 /// Serialized form of a MOTN title stored in `motn_catalog_cache.payload`.
 ///
@@ -24,6 +24,10 @@ pub struct CachedTitle {
     pub genres: Vec<String>,
     pub cast: Vec<String>,
     pub services: Vec<String>,
+    #[serde(default)]
+    pub poster_url: Option<String>,
+    #[serde(default)]
+    pub backdrop_url: Option<String>,
 }
 
 impl From<&FetchedTitle> for CachedTitle {
@@ -40,6 +44,16 @@ impl From<&FetchedTitle> for CachedTitle {
             genres: t.genres.clone(),
             cast: t.cast.clone(),
             services: t.services.iter().map(|s| s.as_str().to_string()).collect(),
+            poster_url: t
+                .poster
+                .as_ref()
+                .filter(|i| i.remote)
+                .map(|i| i.value.clone()),
+            backdrop_url: t
+                .backdrop
+                .as_ref()
+                .filter(|i| i.remote)
+                .map(|i| i.value.clone()),
         }
     }
 }
@@ -66,6 +80,14 @@ impl CachedTitle {
                 .iter()
                 .filter_map(|s| Service::parse(s))
                 .collect(),
+            poster: self.poster_url.map(|value| ImageRef {
+                value,
+                remote: true,
+            }),
+            backdrop: self.backdrop_url.map(|value| ImageRef {
+                value,
+                remote: true,
+            }),
         }
     }
 }
@@ -180,6 +202,8 @@ mod tests {
             genres: vec!["drama".into()],
             cast: vec!["A".into(), "B".into()],
             services: vec![Service::Disney],
+            poster: None,
+            backdrop: None,
         }
     }
 
@@ -230,5 +254,37 @@ mod tests {
         ];
         replace_all(&pool, &entries).await.unwrap();
         assert_eq!(count(&pool).await.unwrap(), 2); // "stale" gone
+    }
+
+    #[test]
+    fn cached_round_trip_preserves_remote_images() {
+        use crate::sync::ImageRef;
+        let mut ft = sample();
+        ft.poster = Some(ImageRef {
+            value: "https://cdn/p.jpg".into(),
+            remote: true,
+        });
+        ft.backdrop = Some(ImageRef {
+            value: "https://cdn/b.jpg".into(),
+            remote: true,
+        });
+
+        let cached = CachedTitle::from(&ft);
+        let json = serde_json::to_string(&cached).unwrap();
+        let back: CachedTitle = serde_json::from_str(&json).unwrap();
+        let rebuilt = back.into_fetched();
+
+        assert_eq!(rebuilt.poster, ft.poster);
+        assert_eq!(rebuilt.backdrop, ft.backdrop);
+    }
+
+    #[test]
+    fn cached_defaults_images_for_old_payloads() {
+        // A payload written before this feature has no image keys.
+        let json = r#"{"imdb_id":"tt1","tmdb_id":null,"title":"X","year":2020,"kind":"movie","imdb_rating":null,"length":null,"description":null,"genres":[],"cast":[],"services":[]}"#;
+        let back: CachedTitle = serde_json::from_str(json).unwrap();
+        let rebuilt = back.into_fetched();
+        assert!(rebuilt.poster.is_none());
+        assert!(rebuilt.backdrop.is_none());
     }
 }

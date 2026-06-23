@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use crate::models::{Service, TitleKind};
-use crate::sync::{CatalogueSource, FetchedTitle};
+use crate::sync::{CatalogueSource, FetchedTitle, ImageRef};
 
 #[derive(Deserialize)]
 struct Container {
@@ -23,6 +23,8 @@ struct Meta {
     title: String,
     year: Option<i64>,
     summary: Option<String>,
+    thumb: Option<String>,
+    art: Option<String>,
     rating: Option<f64>,
     duration: Option<i64>,
     #[serde(default, rename = "Guid")]
@@ -90,6 +92,14 @@ pub fn parse_section(json: &str) -> anyhow::Result<Vec<FetchedTitle>> {
                 genres: m.genre.into_iter().map(|g| g.tag).collect(),
                 cast: m.role.into_iter().map(|r| r.tag).collect(),
                 services: vec![Service::Plex],
+                poster: m.thumb.map(|value| ImageRef {
+                    value,
+                    remote: false,
+                }),
+                backdrop: m.art.map(|value| ImageRef {
+                    value,
+                    remote: false,
+                }),
             })
         })
         .collect())
@@ -195,6 +205,32 @@ mod tests {
         let show = &out[1];
         assert_eq!(show.kind, TitleKind::Series);
         assert_eq!(show.imdb_id.as_deref(), Some("tt11280740"));
+    }
+
+    #[test]
+    fn parse_section_extracts_thumb_and_art_as_plex_refs() {
+        let json = r#"{"MediaContainer":{"Metadata":[
+          {"type":"movie","title":"M","year":2020,
+           "thumb":"/library/metadata/1/thumb/9","art":"/library/metadata/1/art/9",
+           "Guid":[{"id":"imdb://tt1"}]}
+        ]}}"#;
+        let out = parse_section(json).unwrap();
+        let p = out[0].poster.as_ref().unwrap();
+        assert!(!p.remote);
+        assert_eq!(p.value, "/library/metadata/1/thumb/9");
+        let b = out[0].backdrop.as_ref().unwrap();
+        assert!(!b.remote);
+        assert_eq!(b.value, "/library/metadata/1/art/9");
+    }
+
+    #[test]
+    fn parse_section_handles_missing_thumb_art() {
+        let json = r#"{"MediaContainer":{"Metadata":[
+          {"type":"movie","title":"M","year":2020,"Guid":[{"id":"imdb://tt1"}]}
+        ]}}"#;
+        let out = parse_section(json).unwrap();
+        assert!(out[0].poster.is_none());
+        assert!(out[0].backdrop.is_none());
     }
 
     #[test]

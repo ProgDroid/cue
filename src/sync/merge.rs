@@ -3,7 +3,16 @@
 use std::collections::{BTreeSet, HashMap};
 
 use crate::models::{Service, TitleKind};
-use crate::sync::FetchedTitle;
+use crate::sync::{FetchedTitle, ImageRef};
+
+/// Prefer a remote (public CDN) ref over a Plex token-proxy ref; else keep `current`.
+fn prefer_image(current: Option<ImageRef>, incoming: Option<ImageRef>) -> Option<ImageRef> {
+    match (current, incoming) {
+        (Some(c), Some(i)) if !c.remote && i.remote => Some(i),
+        (Some(c), _) => Some(c),
+        (None, x) => x,
+    }
+}
 
 /// Map one raw genre to its normalized form (lowercased, trimmed, aliased).
 fn normalize_one(raw: &str) -> String {
@@ -44,6 +53,8 @@ pub struct MergedTitle {
     pub genres: Vec<String>,
     pub cast: Vec<String>,
     pub services: Vec<Service>,
+    pub poster: Option<ImageRef>,
+    pub backdrop: Option<ImageRef>,
 }
 
 /// Stable identity key (D6): `IMDb` id, else `plex:<guid>`, else `tmdb:<id>`,
@@ -113,6 +124,8 @@ pub fn merge(fetched: Vec<FetchedTitle>) -> Vec<MergedTitle> {
             if existing.length.is_empty() {
                 existing.length = f.length.unwrap_or_default();
             }
+            existing.poster = prefer_image(existing.poster.take(), f.poster);
+            existing.backdrop = prefer_image(existing.backdrop.take(), f.backdrop);
         } else {
             order.push(key.clone());
             by_key.insert(
@@ -130,6 +143,8 @@ pub fn merge(fetched: Vec<FetchedTitle>) -> Vec<MergedTitle> {
                     genres: Vec::new(),
                     cast: f.cast,
                     services: f.services,
+                    poster: f.poster,
+                    backdrop: f.backdrop,
                 },
             );
         }
@@ -224,6 +239,64 @@ mod tests {
         assert_eq!(out[1].imdb_id.as_deref(), Some("tt2"));
     }
 
+    #[test]
+    fn merge_prefers_remote_image_over_plex_path() {
+        use crate::sync::ImageRef;
+        let mut plex_first = ft(Some("tt1"), TitleKind::Movie, vec![], vec![Service::Plex]);
+        plex_first.poster = Some(ImageRef {
+            value: "/library/p.jpg".into(),
+            remote: false,
+        });
+        let mut motn_second = ft(Some("tt1"), TitleKind::Movie, vec![], vec![Service::Disney]);
+        motn_second.poster = Some(ImageRef {
+            value: "https://cdn/p.jpg".into(),
+            remote: true,
+        });
+        motn_second.backdrop = Some(ImageRef {
+            value: "https://cdn/b.jpg".into(),
+            remote: true,
+        });
+
+        let out = merge(vec![plex_first, motn_second]);
+        assert_eq!(out.len(), 1);
+        let p = out[0].poster.as_ref().unwrap();
+        assert!(p.remote, "remote CDN ref must win over a Plex path");
+        assert_eq!(p.value, "https://cdn/p.jpg");
+        let b = out[0].backdrop.as_ref().unwrap();
+        assert!(b.remote);
+        assert_eq!(b.value, "https://cdn/b.jpg");
+    }
+
+    #[test]
+    fn merge_keeps_remote_when_plex_seen_second() {
+        use crate::sync::ImageRef;
+        let mut motn_first = ft(Some("tt1"), TitleKind::Movie, vec![], vec![Service::Disney]);
+        motn_first.poster = Some(ImageRef {
+            value: "https://cdn/p.jpg".into(),
+            remote: true,
+        });
+        let mut plex_second = ft(Some("tt1"), TitleKind::Movie, vec![], vec![Service::Plex]);
+        plex_second.poster = Some(ImageRef {
+            value: "/library/p.jpg".into(),
+            remote: false,
+        });
+
+        let out = merge(vec![motn_first, plex_second]);
+        let p = out[0].poster.as_ref().unwrap();
+        assert!(p.remote);
+        assert_eq!(p.value, "https://cdn/p.jpg");
+    }
+
+    #[test]
+    fn merge_leaves_images_none_when_absent() {
+        let a = ft(Some("tt1"), TitleKind::Movie, vec![], vec![Service::Plex]);
+        let b = ft(Some("tt1"), TitleKind::Movie, vec![], vec![Service::Disney]);
+        let out = merge(vec![a, b]);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].poster.is_none());
+        assert!(out[0].backdrop.is_none());
+    }
+
     // test helper
     fn ft(
         imdb: Option<&str>,
@@ -244,6 +317,8 @@ mod tests {
             genres,
             cast: vec![],
             services,
+            poster: None,
+            backdrop: None,
         }
     }
 }

@@ -6,6 +6,7 @@ use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::models::Service;
 use crate::sync::merge::MergedTitle;
+use crate::sync::ImageRef;
 
 /// Find an existing surrogate id by identity (imdb → tmdb → `plex_guid`).
 async fn find_existing(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<Option<i64>> {
@@ -74,6 +75,15 @@ async fn replace_children(
     Ok(())
 }
 
+/// Split an image ref into `(url_column, plex_column)` values.
+const fn split_ref(r: Option<&ImageRef>) -> (Option<&str>, Option<&str>) {
+    match r {
+        Some(i) if i.remote => (Some(i.value.as_str()), None),
+        Some(i) => (None, Some(i.value.as_str())),
+        None => (None, None),
+    }
+}
+
 /// Insert a new title or update the existing one matched by identity. Returns its id.
 ///
 /// All writes (title row + genres + cast) are wrapped in a single transaction so a
@@ -85,12 +95,16 @@ pub async fn upsert_title(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<
     // Identity lookup runs outside the tx — read-only, no consistency risk.
     let existing = find_existing(pool, t).await?;
 
+    let (poster_url, poster_plex) = split_ref(t.poster.as_ref());
+    let (backdrop_url, backdrop_plex) = split_ref(t.backdrop.as_ref());
+
     let mut tx = pool.begin().await?;
     let id = if let Some(id) = existing {
         sqlx::query(
             "UPDATE titles SET imdb_id = ?, tmdb_id = ?, plex_guid = ?, title = ?, year = ?,
-             type = ?, imdb_rating = ?, length = ?, description = ?, updated_at = datetime('now')
-             WHERE id = ?",
+             type = ?, imdb_rating = ?, length = ?, description = ?,
+             poster_url = ?, poster_plex = ?, backdrop_url = ?, backdrop_plex = ?,
+             updated_at = datetime('now') WHERE id = ?",
         )
         .bind(&t.imdb_id)
         .bind(&t.tmdb_id)
@@ -101,14 +115,18 @@ pub async fn upsert_title(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<
         .bind(t.imdb_rating)
         .bind(&t.length)
         .bind(&t.description)
+        .bind(poster_url)
+        .bind(poster_plex)
+        .bind(backdrop_url)
+        .bind(backdrop_plex)
         .bind(id)
         .execute(&mut *tx)
         .await?;
         id
     } else {
         sqlx::query_scalar::<_, i64>(
-            "INSERT INTO titles (imdb_id, tmdb_id, plex_guid, title, year, type, imdb_rating, length, description)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+            "INSERT INTO titles (imdb_id, tmdb_id, plex_guid, title, year, type, imdb_rating, length, description, poster_url, poster_plex, backdrop_url, backdrop_plex)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
         )
         .bind(&t.imdb_id)
         .bind(&t.tmdb_id)
@@ -119,6 +137,10 @@ pub async fn upsert_title(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<
         .bind(t.imdb_rating)
         .bind(&t.length)
         .bind(&t.description)
+        .bind(poster_url)
+        .bind(poster_plex)
+        .bind(backdrop_url)
+        .bind(backdrop_plex)
         .fetch_one(&mut *tx)
         .await?
     };
@@ -241,6 +263,8 @@ mod tests {
             genres: genres.iter().map(|s| (*s).to_string()).collect(),
             cast: vec!["Actor".into()],
             services: services.to_vec(),
+            poster: None,
+            backdrop: None,
         }
     }
 
@@ -357,6 +381,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn upsert_persists_image_columns() {
+        use crate::sync::ImageRef;
+        let (p, _dir) = pool().await;
+        let mut m = merged("tt9", "Img", &[], &[Service::Plex]);
+        m.poster = Some(ImageRef {
+            value: "https://cdn/p.jpg".into(),
+            remote: true,
+        });
+        m.backdrop = Some(ImageRef {
+            value: "/library/b.jpg".into(),
+            remote: false,
+        });
+        let id = upsert_title(&p, &m).await.unwrap();
+
+        let row: (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = sqlx::query_as(
+            "SELECT poster_url, poster_plex, backdrop_url, backdrop_plex FROM titles WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(row.0.as_deref(), Some("https://cdn/p.jpg")); // remote poster -> _url
+        assert_eq!(row.1, None); // not the plex column
+        assert_eq!(row.2, None); // backdrop not remote
+        assert_eq!(row.3.as_deref(), Some("/library/b.jpg")); // plex backdrop -> _plex
+
+        // UPDATE path: same imdb_id, opposite remote-ness per image, must re-map correctly.
+        let mut m2 = merged("tt9", "Img2", &[], &[Service::Plex]);
+        m2.poster = Some(ImageRef {
+            value: "/library/p2.jpg".into(),
+            remote: false,
+        });
+        m2.backdrop = Some(ImageRef {
+            value: "https://cdn/b2.jpg".into(),
+            remote: true,
+        });
+        let id2 = upsert_title(&p, &m2).await.unwrap();
+        assert_eq!(id2, id, "same imdb_id reuses the row (UPDATE, not INSERT)");
+
+        let row2: (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = sqlx::query_as(
+            "SELECT poster_url, poster_plex, backdrop_url, backdrop_plex FROM titles WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(row2.0, None); // poster now non-remote -> _url cleared
+        assert_eq!(row2.1.as_deref(), Some("/library/p2.jpg")); // poster -> _plex
+        assert_eq!(row2.2.as_deref(), Some("https://cdn/b2.jpg")); // backdrop now remote -> _url
+        assert_eq!(row2.3, None); // backdrop _plex cleared
+    }
+
+    #[tokio::test]
     async fn upsert_tolerates_duplicate_tmdb_id() {
         // Regression: fetch_optional errors when >1 row matches; LIMIT 1 prevents this.
         let (p, _dir) = pool().await;
@@ -384,6 +471,8 @@ mod tests {
             genres: vec![],
             cast: vec![],
             services: vec![],
+            poster: None,
+            backdrop: None,
         };
         // Must NOT error despite two rows sharing tmdb_id "555".
         let id = upsert_title(&p, &m).await.unwrap();
