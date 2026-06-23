@@ -32,6 +32,7 @@ export function useVirtualGrid(opts: UseVirtualGridOptions): UseVirtualGrid {
     viewportH.value = window.innerHeight
     const el = opts.containerEl.value
     gridTop.value = el ? el.getBoundingClientRect().top + window.scrollY : 0
+    if (el) containerWidth.value = el.clientWidth
   }
 
   let ro: ResizeObserver | null = null
