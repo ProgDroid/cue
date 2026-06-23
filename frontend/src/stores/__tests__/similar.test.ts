@@ -5,8 +5,8 @@ import type { Title } from '@/types'
 
 function t(p: Partial<Title>): Title {
   return { id: 0, imdbId: null, title: '', year: 2000, services: ['plex'],
-    type: 'movie', genres: [], imdb: null, len: '90 min', desc: '',
-    cast: [], watched: false, rating: null, ...p }
+    type: 'movie', genres: [], imdb: null, len: '90 min',
+    watched: false, rating: null, ...p }
 }
 
 beforeEach(() => setActivePinia(createPinia()))

@@ -2,15 +2,16 @@ use std::collections::{HashMap, HashSet};
 
 use sqlx::SqlitePool;
 
-use crate::models::{Service, TitleDto, TitleKind, TitleRow};
+use crate::models::{Service, TitleDto, TitleKind, TitleListItem, TitleListRow, TitleRow};
 
-/// Fetch every title fully hydrated with services, genres, cast, and user data.
+/// Fetch every title in the slim list shape (services, genres, user-data; no
+/// `desc`/`cast`).
 ///
 /// # Errors
 /// Returns an error if any database query fails.
-pub async fn fetch_catalogue(pool: &SqlitePool) -> anyhow::Result<Vec<TitleDto>> {
-    let rows: Vec<TitleRow> = sqlx::query_as(
-        "SELECT id, imdb_id, title, year, type, imdb_rating, length, description
+pub async fn fetch_catalogue(pool: &SqlitePool) -> anyhow::Result<Vec<TitleListItem>> {
+    let rows: Vec<TitleListRow> = sqlx::query_as(
+        "SELECT id, imdb_id, title, year, type, imdb_rating, length
          FROM titles ORDER BY id",
     )
     .fetch_all(pool)
@@ -37,16 +38,6 @@ pub async fn fetch_catalogue(pool: &SqlitePool) -> anyhow::Result<Vec<TitleDto>>
         genre_map.entry(tid).or_default().push(g);
     }
 
-    let cast = sqlx::query_as::<_, (i64, String)>(
-        "SELECT title_id, person FROM title_cast ORDER BY title_id, ord",
-    )
-    .fetch_all(pool)
-    .await?;
-    let mut cast_map: HashMap<i64, Vec<String>> = HashMap::new();
-    for (tid, person) in cast {
-        cast_map.entry(tid).or_default().push(person);
-    }
-
     let ratings = sqlx::query_as::<_, (String, i64)>("SELECT imdb_id, rating FROM user_ratings")
         .fetch_all(pool)
         .await?;
@@ -63,7 +54,7 @@ pub async fn fetch_catalogue(pool: &SqlitePool) -> anyhow::Result<Vec<TitleDto>>
         let (watched, rating) = r.imdb_id.as_ref().map_or((false, None), |key| {
             (watched_set.contains(key), rating_map.get(key).copied())
         });
-        out.push(TitleDto {
+        out.push(TitleListItem {
             id: r.id,
             imdb_id: r.imdb_id,
             title: r.title,
@@ -73,11 +64,83 @@ pub async fn fetch_catalogue(pool: &SqlitePool) -> anyhow::Result<Vec<TitleDto>>
             genres: genre_map.remove(&r.id).unwrap_or_default(),
             imdb: r.imdb_rating,
             len: r.length,
-            desc: r.description,
-            cast: cast_map.remove(&r.id).unwrap_or_default(),
             watched,
             rating,
         });
     }
     Ok(out)
+}
+
+/// Fetch one fully-hydrated title (services, genres, cast, user-data).
+///
+/// # Errors
+/// Returns an error if any database query fails.
+pub async fn fetch_title(pool: &SqlitePool, id: i64) -> anyhow::Result<Option<TitleDto>> {
+    let Some(r) = sqlx::query_as::<_, TitleRow>(
+        "SELECT id, imdb_id, title, year, type, imdb_rating, length, description
+         FROM titles WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Ok(None);
+    };
+
+    let services: Vec<Service> =
+        sqlx::query_scalar::<_, String>("SELECT service FROM title_services WHERE title_id = ?")
+            .bind(id)
+            .fetch_all(pool)
+            .await?
+            .iter()
+            .filter_map(|s| Service::parse(s))
+            .collect();
+
+    let genres = sqlx::query_scalar::<_, String>(
+        "SELECT genre FROM title_genres WHERE title_id = ? ORDER BY genre",
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await?;
+
+    let cast = sqlx::query_scalar::<_, String>(
+        "SELECT person FROM title_cast WHERE title_id = ? ORDER BY ord",
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await?;
+
+    let (watched, rating) = if let Some(key) = r.imdb_id.as_ref() {
+        let rating =
+            sqlx::query_scalar::<_, i64>("SELECT rating FROM user_ratings WHERE imdb_id = ?")
+                .bind(key)
+                .fetch_optional(pool)
+                .await?;
+        let watched =
+            sqlx::query_scalar::<_, i64>("SELECT 1 FROM watch_history WHERE imdb_id = ? LIMIT 1")
+                .bind(key)
+                .fetch_optional(pool)
+                .await?
+                .is_some();
+        (watched, rating)
+    } else {
+        (false, None)
+    };
+
+    let kind = TitleKind::parse(&r.kind).unwrap_or(TitleKind::Movie);
+    Ok(Some(TitleDto {
+        id: r.id,
+        imdb_id: r.imdb_id,
+        title: r.title,
+        year: r.year,
+        services,
+        kind,
+        genres,
+        imdb: r.imdb_rating,
+        len: r.length,
+        desc: r.description,
+        cast,
+        watched,
+        rating,
+    }))
 }

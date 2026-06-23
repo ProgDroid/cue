@@ -14,10 +14,21 @@ These were noted during Plan 3 as "fine at seed scale, revisit at prod scale."
 The first real MOTN sync brought the catalogue to ~5097 titles, so they are now
 live but still working acceptably:
 
-- **`GET /api/catalogue` returns the entire library in one response** — a full
-  table scan server-side plus a large JSON payload hydrated to Vue on startup.
-  Works at ~5k; revisit with pagination / a lighter list endpoint (or
-  server-side filtering) as the library grows.
+- ✅ **`GET /api/catalogue` slim list DTO + lazy detail + virtualization — DONE & merged 2026-06-23.**
+  `GET /api/catalogue` now returns a `Vec<TitleListItem>` (no `desc`/`cast`),
+  materially reducing the startup payload. Full detail (description, cast, etc.)
+  is fetched on demand via `GET /api/titles/:id`. The frontend `PosterGrid` uses
+  a window-scroll virtualizer (`useVirtualGrid`; JS-authoritative `--cols`,
+  measured row height) so only the visible rows are rendered regardless of
+  catalogue size. Server-side pagination was intentionally **not** done (design
+  D1 — catalogue is bounded ~5k and a slim list DTO achieves the same goal).
+  See spec `docs/superpowers/specs/2026-06-23-cue-catalogue-scale-design.md`
+  and plan `docs/superpowers/plans/2026-06-23-catalogue-scale.md`.
+  **Live-verify (post-merge):** on a real ~5k catalogue confirm (a) the
+  `/api/catalogue` payload is materially smaller than before (no desc/cast
+  fields); (b) opening a title still shows description + cast via the detail
+  fetch; (c) the grid renders a constant-height window while scrolling (DOM
+  row count stays stable).
 - **Ask retrieval brute-forces cosine** over all title vectors in Rust
   (`similarity` / `candidates_for`). ~5k × 1536-dim f32 is fast; revisit with a
   vector index (e.g. sqlite-vss / HNSW) only if latency becomes noticeable.

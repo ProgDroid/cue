@@ -20,8 +20,7 @@ export class StubAskService implements AskService {
     const q = query.trim().toLowerCase()
     const hits = base.filter(t =>
       t.title.toLowerCase().includes(q) ||
-      t.genres.some(g => g.toLowerCase().includes(q)) ||
-      t.desc.toLowerCase().includes(q))
+      t.genres.some(g => g.toLowerCase().includes(q)))
     const ids = (hits.length ? hits : base).map(t => t.id)
     return { line: `Here's what fits "${query}".`, sub: `${ids.length} · refine or filter to narrow`, ids }
   }

@@ -69,6 +69,19 @@ pub struct TitleRow {
     pub description: String,
 }
 
+/// Lightweight row for the catalogue list query (no `description`).
+#[derive(Debug, Clone, FromRow)]
+pub struct TitleListRow {
+    pub id: i64,
+    pub imdb_id: Option<String>,
+    pub title: String,
+    pub year: i64,
+    #[sqlx(rename = "type")]
+    pub kind: String,
+    pub imdb_rating: Option<f64>,
+    pub length: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct TitleDto {
     pub id: i64,
@@ -84,6 +97,24 @@ pub struct TitleDto {
     pub len: String,
     pub desc: String,
     pub cast: Vec<String>,
+    pub watched: bool,
+    pub rating: Option<i64>,
+}
+
+/// Slim list shape: `TitleDto` minus the DetailView-only `desc`/`cast`.
+#[derive(Debug, Clone, Serialize)]
+pub struct TitleListItem {
+    pub id: i64,
+    #[serde(rename = "imdbId")]
+    pub imdb_id: Option<String>,
+    pub title: String,
+    pub year: i64,
+    pub services: Vec<Service>,
+    #[serde(rename = "type")]
+    pub kind: TitleKind,
+    pub genres: Vec<String>,
+    pub imdb: Option<f64>,
+    pub len: String,
     pub watched: bool,
     pub rating: Option<i64>,
 }

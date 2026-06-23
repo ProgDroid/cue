@@ -16,6 +16,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         web::scope("/api")
             .route("/health", web::get().to(health))
             .route("/catalogue", web::get().to(catalogue::get_catalogue))
+            .route("/titles/{id}", web::get().to(catalogue::get_title))
             .route("/ask", web::post().to(ask::ask))
             .route("/ask/similar", web::post().to(ask::similar))
             .route("/ask/refine", web::post().to(ask::refine))

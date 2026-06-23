@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCatalogueStore } from '@/stores/catalogue'
+import { getTitle } from '@/api/client'
+import type { TitleDetail } from '@/types'
 import ServicePill from '@/components/ServicePill.vue'
 import StarRating from '@/components/StarRating.vue'
 import { posterPlaceholder, monogram } from '@/design/tokens'
@@ -11,35 +13,46 @@ const router = useRouter()
 const store = useCatalogueStore()
 
 const id = computed(() => Number(route.params.id))
-const title = computed(() => store.catalogue.find(t => t.id === id.value) ?? null)
+const detail = ref<TitleDetail | null>(null)
+const loading = ref(true)
 
-const ph = computed(() => title.value ? posterPlaceholder(title.value.title) : null)
-const mono = computed(() => title.value ? monogram(title.value.title) : '')
+async function loadDetail(tid: number) {
+  loading.value = true
+  detail.value = null
+  try {
+    detail.value = await getTitle(tid)
+  } catch {
+    // any failure leaves detail null -> the v-else not-found panel renders
+  } finally {
+    loading.value = false
+  }
+}
+
+const ph = computed(() => detail.value ? posterPlaceholder(detail.value.title) : null)
+const mono = computed(() => detail.value ? monogram(detail.value.title) : '')
 
 const factLine = computed(() => {
-  if (!title.value) return ''
-  const kind = title.value.type === 'movie' ? 'Movie' : 'Series'
-  return `${title.value.year} · ${kind} · ${title.value.len} · ${title.value.genres.join(', ')}`
+  if (!detail.value) return ''
+  const kind = detail.value.type === 'movie' ? 'Movie' : 'Series'
+  return `${detail.value.year} · ${kind} · ${detail.value.len} · ${detail.value.genres.join(', ')}`
 })
 
-const similar = computed(() => title.value ? store.similar(id.value) : [])
+const similar = computed(() => detail.value ? store.similar(id.value) : [])
 
 function back() { router.push('/') }
 
-// Wrappers that resolve id.value in script scope so the template never
-// passes the ComputedRef object itself into store methods.
 const idIsWatched = computed(() => store.isWatched(id.value))
 const idRating = computed(() => store.ratingOf(id.value))
-const canRate = computed(() => !!title.value?.imdbId)
+const canRate = computed(() => !!detail.value?.imdbId)
 function toggleWatched() { store.toggleWatched(id.value) }
 function setRating(n: number) { store.setRating(id.value, n) }
 function clearRating() { store.clearRating(id.value) }
 
 onMounted(() => {
-  if (store.catalogue.length === 0) {
-    store.load()
-  }
+  loadDetail(id.value)
+  if (store.catalogue.length === 0) store.load()
 })
+watch(id, (n) => loadDetail(n))
 
 const posterFailed = ref(false)
 const backdropFailed = ref(false)
@@ -47,7 +60,7 @@ const simFailed = ref<Record<number, boolean>>({})
 </script>
 
 <template>
-  <div v-if="title && ph" class="detail-root">
+  <div v-if="detail && ph" class="detail-root">
     <!-- Backdrop band -->
     <div class="backdrop" :style="{ background: ph.backdrop }">
       <!-- Motif blob -->
@@ -56,8 +69,8 @@ const simFailed = ref<Record<number, boolean>>({})
       <div class="backdrop-mono" :style="{ color: ph.glyphColor }">{{ mono }}</div>
       <!-- Real art overlay -->
       <img
-        v-show="title && !backdropFailed"
-        :src="`/api/titles/${title.id}/backdrop`"
+        v-show="detail && !backdropFailed"
+        :src="`/api/titles/${detail.id}/backdrop`"
         alt=""
         class="backdrop-img"
         @error="backdropFailed = true"
@@ -78,8 +91,8 @@ const simFailed = ref<Record<number, boolean>>({})
           <div class="poster-motif" :style="{ background: ph.motif }" />
           <div class="poster-mono" :style="{ color: ph.glyphColor }">{{ mono }}</div>
           <img
-            v-show="title && !posterFailed"
-            :src="`/api/titles/${title.id}/poster`"
+            v-show="detail && !posterFailed"
+            :src="`/api/titles/${detail.id}/poster`"
             loading="lazy"
             alt=""
             class="poster-img"
@@ -116,32 +129,32 @@ const simFailed = ref<Record<number, boolean>>({})
         <!-- Badge row: service pills + IMDb pill -->
         <div class="badge-row">
           <ServicePill
-            v-for="svc in title.services"
+            v-for="svc in detail.services"
             :key="svc"
             :service="svc"
             class="svc-pill-wrap"
           />
-          <span v-if="title.imdb !== null" class="imdb-pill">
+          <span v-if="detail.imdb !== null" class="imdb-pill">
             <span class="imdb-star">★</span>
-            <span class="imdb-score">{{ title.imdb }}</span>
+            <span class="imdb-score">{{ detail.imdb }}</span>
             <span class="imdb-label">IMDb</span>
           </span>
         </div>
 
         <!-- Title -->
-        <h1 class="title-h1">{{ title.title }}</h1>
+        <h1 class="title-h1">{{ detail.title }}</h1>
 
         <!-- Fact line -->
         <div class="fact-line">{{ factLine }}</div>
 
         <!-- Description -->
-        <p class="desc">{{ title.desc }}</p>
+        <p class="desc">{{ detail.desc }}</p>
 
         <!-- Cast -->
         <div class="cast-section">
           <div class="section-eyebrow">Cast</div>
           <div class="cast-chips">
-            <span v-for="person in title.cast" :key="person" class="cast-chip">{{ person }}</span>
+            <span v-for="person in detail.cast" :key="person" class="cast-chip">{{ person }}</span>
           </div>
         </div>
 
@@ -185,6 +198,11 @@ const simFailed = ref<Record<number, boolean>>({})
         </div>
       </div>
     </div>
+  </div>
+  <div v-else-if="loading" class="detail-state">Loading…</div>
+  <div v-else class="detail-state">
+    <p>Title not found.</p>
+    <button class="back-btn" @click="back">← Library</button>
   </div>
 </template>
 
@@ -560,5 +578,12 @@ const simFailed = ref<Record<number, boolean>>({})
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.detail-state {
+  padding: 80px 22px;
+  text-align: center;
+  color: var(--text-faint, #5f6570);
+  font-family: var(--font-ui, 'Hanken Grotesk', system-ui, sans-serif);
 }
 </style>
