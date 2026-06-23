@@ -148,8 +148,11 @@ frontend: sync finishes ⇒ catalogue store reloads ⇒ watched flags render
   write on a failed scan). Never propagated as a sync failure.
 - **Plex `fetch` (catalogue) failure:** the source is not "successful," so the
   watch-apply step is skipped — prior watched state survives a Plex outage (W6).
-- **`replace_watch_history` DB error:** propagated from `run_sync` like other DB
-  writes (transaction rolls back; no partial replace).
+- **`replace_watch_history` DB error:** the inner transaction rolls back (no
+  partial replace), and the error is **logged non-fatally** — watch history is
+  secondary enrichment and must never fail an otherwise-successful catalogue
+  sync. (`replace_watch_history` itself returns `Result`; `run_sync` logs rather
+  than `?`-propagates it.)
 
 ## 7. Testing
 
