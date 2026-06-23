@@ -29,9 +29,11 @@ function back() { router.push('/') }
 // Wrappers that resolve id.value in script scope so the template never
 // passes the ComputedRef object itself into store methods.
 const idIsWatched = computed(() => store.isWatched(id.value))
-function toggleWatched() { store.toggleWatched(id.value) }
 const idRating = computed(() => store.ratingOf(id.value))
+const canRate = computed(() => !!title.value?.imdbId)
+function toggleWatched() { store.toggleWatched(id.value) }
 function setRating(n: number) { store.setRating(id.value, n) }
+function clearRating() { store.clearRating(id.value) }
 
 onMounted(() => {
   if (store.catalogue.length === 0) {
@@ -71,6 +73,7 @@ onMounted(() => {
           data-test="mark-watched"
           class="watched-btn"
           :class="{ 'watched-btn--active': idIsWatched }"
+          :disabled="!canRate"
           @click="toggleWatched"
         >
           {{ idIsWatched ? '✓ Watched' : 'Mark as watched' }}
@@ -81,8 +84,11 @@ onMounted(() => {
           <div class="rating-eyebrow">Your rating</div>
           <StarRating
             :value="idRating"
+            :disabled="!canRate"
             @set="setRating"
+            @clear="clearRating"
           />
+          <p v-if="!canRate" class="no-imdb-hint">No IMDb match — can't save ratings.</p>
         </div>
       </div>
 
@@ -317,6 +323,18 @@ onMounted(() => {
   text-transform: uppercase;
   color: var(--text-faint, #5f6570);
   margin-bottom: 9px;
+}
+
+.no-imdb-hint {
+  margin: 9px 0 0;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 10.5px;
+  color: var(--text-faint, #5f6570);
+}
+
+.watched-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 /* ---- Info column ---- */

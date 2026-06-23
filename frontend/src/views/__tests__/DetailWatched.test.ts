@@ -7,77 +7,61 @@ import { useCatalogueStore } from '@/stores/catalogue'
 import type { Title } from '@/types'
 
 vi.mock('@/api/userData', () => ({
-  setRating: vi.fn().mockResolvedValue({ rating: 4 }),
+  setRating: vi.fn().mockResolvedValue({ rating: 7 }),
   clearRating: vi.fn().mockResolvedValue({ rating: null }),
   setWatched: vi.fn().mockResolvedValue({ watched: true }),
 }))
 
-const title: Title = {
-  id: 5,
-  imdbId: 'tt0000005',
-  title: 'Coco',
-  year: 2017,
-  services: ['disney'],
-  type: 'movie',
-  genres: ['Animation', 'Musical'],
-  imdb: 8.4,
-  len: '105 min',
-  desc: 'A boy and music.',
-  cast: ['Anthony Gonzalez'],
-  watched: false,
-  rating: null,
+function makeTitle(over: Partial<Title> = {}): Title {
+  return {
+    id: 5, imdbId: 'tt0000005', title: 'Coco', year: 2017, services: ['disney'],
+    type: 'movie', genres: ['Animation'], imdb: 8.4, len: '105 min',
+    desc: 'A boy and music.', cast: ['Anthony Gonzalez'], watched: false, rating: null,
+    ...over,
+  }
 }
 
 beforeEach(() => setActivePinia(createPinia()))
 
+async function mountDetail(title: Title) {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/', component: { template: '<div>home</div>' } },
+      { path: '/title/:id', component: DetailView },
+    ],
+  })
+  const store = useCatalogueStore()
+  store.catalogue = [title]
+  router.push(`/title/${title.id}`)
+  await router.isReady()
+  const wrapper = mount(DetailView, { global: { plugins: [router] } })
+  await flushPromises()
+  return { wrapper, store }
+}
+
 describe('DetailView — watched/rating store wiring', () => {
-  async function mountDetail() {
-    const router = createRouter({
-      history: createMemoryHistory(),
-      routes: [
-        { path: '/', component: { template: '<div>home</div>' } },
-        { path: '/title/:id', component: DetailView },
-      ],
-    })
-    const store = useCatalogueStore()
-    store.catalogue = [title]
-    router.push('/title/5')
-    await router.isReady()
-    const wrapper = mount(DetailView, { global: { plugins: [router] } })
+  it('mark-watched persists and updates the store', async () => {
+    const { wrapper, store } = await mountDetail(makeTitle())
+    await wrapper.find('[data-test="mark-watched"]').trigger('click')
     await flushPromises()
-    return { wrapper, store }
-  }
-
-  it('toggleWatched uses the numeric id, not a ref object', async () => {
-    const { wrapper, store } = await mountDetail()
-
-    const btn = wrapper.find('[data-test="mark-watched"]')
-    expect(btn.exists()).toBe(true)
-
-    await btn.trigger('click')
-    await flushPromises()
-
-    // Must be keyed by the real numeric id 5, not "[object Object]"
     expect(store.isWatched(5)).toBe(true)
-    // No "[object Object]" pollution
-    const keys = Object.keys(store.watched)
-    expect(keys).not.toContain('[object Object]')
+    expect(Object.keys(store.watched)).not.toContain('[object Object]')
   })
 
-  it('setRating uses the numeric id, not a ref object', async () => {
-    const { wrapper, store } = await mountDetail()
-
+  it('clicking a star persists the rating', async () => {
+    const { wrapper, store } = await mountDetail(makeTitle())
     const stars = wrapper.findAll('[data-test="star"]')
-    expect(stars).toHaveLength(5)
-
-    // Click the 4th star (index 3)
-    await stars[3].trigger('click')
+    expect(stars).toHaveLength(10)
+    await stars[6].trigger('click') // 7th pip
     await flushPromises()
+    expect(store.ratingOf(5)).toBe(7)
+    expect(Object.keys(store.ratings)).not.toContain('[object Object]')
+  })
 
-    // Must be keyed by the real numeric id 5
-    expect(store.ratingOf(5)).toBe(4)
-    // No "[object Object]" pollution
-    const keys = Object.keys(store.ratings)
-    expect(keys).not.toContain('[object Object]')
+  it('disables controls when the title has no imdbId', async () => {
+    const { wrapper } = await mountDetail(makeTitle({ imdbId: null }))
+    expect(wrapper.find('[data-test="mark-watched"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-test="star"]').attributes('disabled')).toBeDefined()
   })
 })
