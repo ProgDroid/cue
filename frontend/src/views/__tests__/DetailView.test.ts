@@ -45,6 +45,18 @@ describe('DetailView', () => {
     expect(w.text()).toContain('Title not found')
   })
 
+  it('shows a retry panel on a transient (non-404) error, and retry recovers', async () => {
+    const spy = vi.spyOn(client, 'getTitle').mockRejectedValue(new Error('network down'))
+    const w = await mountAt(5)
+    expect(w.find('[data-test="detail-error"]').exists()).toBe(true)
+    expect(w.text()).not.toContain('Title not found')
+    // Retry re-invokes getTitle; on success the detail renders.
+    spy.mockResolvedValueOnce(detail)
+    await w.find('[data-test="detail-error"] button').trigger('click')
+    await flushPromises()
+    expect(w.text()).toContain('Coco')
+  })
+
   it('re-fetches when the route id changes', async () => {
     const detail6: TitleDetail = { ...listItem, id: 6, title: 'Up', desc: 'A balloon.', cast: ['Ed Asner'] }
     vi.spyOn(client, 'getTitle').mockImplementation((id) =>

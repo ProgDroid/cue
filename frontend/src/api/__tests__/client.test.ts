@@ -55,6 +55,16 @@ describe('api client', () => {
     await expect(getCatalogue()).rejects.toThrow(/invalid|title/i)
   })
 
+  it('getCatalogue rejects a wrong-typed imdbId (drives canRate)', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, [{ ...listItem, imdbId: 123 }]))
+    await expect(getCatalogue()).rejects.toThrow(/invalid|title/i)
+  })
+
+  it('getCatalogue rejects a wrong-typed rating', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, [{ ...listItem, rating: 'high' }]))
+    await expect(getCatalogue()).rejects.toThrow(/invalid|title/i)
+  })
+
   it('getCatalogue throws on non-OK response', async () => {
     vi.stubGlobal('fetch', mockFetch(500, null))
     await expect(getCatalogue()).rejects.toThrow(/HTTP 500/)

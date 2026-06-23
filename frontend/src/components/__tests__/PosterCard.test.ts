@@ -36,4 +36,15 @@ describe('PosterCard', () => {
     const w = mount(PosterCard, { props: { title, watched: true } })
     expect(w.find('[data-test="watched-badge"]').exists()).toBe(true)
   })
+
+  it('is keyboard-activatable and labels its service identity', async () => {
+    const w = mount(PosterCard, { props: { title, watched: false } })
+    const card = w.get('[data-test="card"]')
+    expect(card.attributes('role')).toBe('button')
+    expect(card.attributes('tabindex')).toBe('0')
+    await card.trigger('keydown.enter')
+    expect(w.emitted('select')?.[0]).toEqual([7])
+    // Service is conveyed by a labelled dot, not colour alone.
+    expect(w.find('.svc-dot').attributes('aria-label')).toBe('Crunchyroll')
+  })
 })

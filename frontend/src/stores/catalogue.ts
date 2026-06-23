@@ -183,7 +183,9 @@ export const useCatalogueStore = defineStore('catalogue', {
     },
 
     async refine(kind: 'lighter' | 'shorter' | 'surprise') {
-      const current = this.resultIds.map(id => this.catalogue.find(t => t.id === id)!).filter(Boolean)
+      const current = this.resultIds
+        .map(id => this.catalogue.find(t => t.id === id))
+        .filter((t): t is Title => t != null)
       this.askError = null
       this.resolving = true
       try {

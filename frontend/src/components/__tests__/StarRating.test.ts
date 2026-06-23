@@ -29,4 +29,15 @@ describe('StarRating', () => {
     expect(w.emitted('set')).toBeUndefined()
     expect(w.emitted('clear')).toBeUndefined()
   })
+
+  it('exposes group + per-star labels and pressed state for screen readers', () => {
+    const w = mount(StarRating, { props: { value: 7 } })
+    const group = w.find('.star-row')
+    expect(group.attributes('role')).toBe('group')
+    expect(group.attributes('aria-label')).toBe('Your rating')
+    const stars = w.findAll('[data-test="star"]')
+    expect(stars[6].attributes('aria-label')).toBe('Rate 7 out of 10')
+    expect(stars[6].attributes('aria-pressed')).toBe('true')
+    expect(stars[5].attributes('aria-pressed')).toBe('false')
+  })
 })
