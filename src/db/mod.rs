@@ -1,5 +1,6 @@
 pub mod catalogue;
 pub mod embeddings;
+pub mod motn_cache;
 pub mod seed;
 pub mod sync_runs;
 pub mod user_data;
@@ -56,6 +57,8 @@ mod tests {
                 .unwrap();
 
         for expected in [
+            "motn_catalog_cache",
+            "sync_runs",
             "title_cast",
             "title_embeddings",
             "title_genres",
@@ -63,7 +66,6 @@ mod tests {
             "titles",
             "user_ratings",
             "watch_history",
-            "sync_runs",
         ] {
             assert!(
                 names.contains(&expected.to_string()),

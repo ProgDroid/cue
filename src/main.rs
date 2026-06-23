@@ -73,7 +73,11 @@ async fn main() -> std::io::Result<()> {
     }
     if let Some(key) = cfg.motn_api_key.clone() {
         let country = cfg.region.clone().unwrap_or_else(|| "gb".to_string());
-        sources.push(Arc::new(cue::sync::motn::MotnClient::new(key, country)));
+        sources.push(Arc::new(cue::sync::motn::MotnClient::new(
+            key,
+            country,
+            pool.clone(),
+        )));
     }
     let runner = cue::sync::SyncRunner::new(pool.clone(), sources, embedder);
 

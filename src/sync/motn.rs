@@ -4,7 +4,10 @@ use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use serde::Deserialize;
+use sqlx::SqlitePool;
 
+use crate::db::motn_cache::CachedTitle;
+use crate::db::{motn_cache, sync_runs};
 use crate::models::{Service, TitleKind};
 use crate::sync::{CatalogueSource, FetchedTitle};
 
@@ -63,9 +66,34 @@ struct Page {
     next_cursor: Option<String>,
 }
 
+/// One `/changes` response page. `shows` is a map keyed by showId.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChangesPage {
+    #[serde(default)]
+    changes: Vec<ChangeEntry>,
+    #[serde(default)]
+    shows: HashMap<String, Show>,
+    #[serde(default)]
+    has_more: bool,
+    #[serde(default)]
+    next_cursor: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChangeEntry {
+    change_type: String,
+    #[serde(default)]
+    item_type: Option<String>,
+    show_id: String,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Show {
+    #[serde(default)]
+    id: String,
     imdb_id: Option<String>,
     tmdb_id: Option<String>,
     title: String,
@@ -101,12 +129,58 @@ struct Named {
     name: String,
 }
 
-/// Parse one search page into `(titles, next_cursor)`.
-///
-/// Each title is stamped with only the wanted services its
-/// `streamingOptions[country]` actually lists, so a combined
-/// `disney,crunchyroll` search attributes each title correctly instead of
-/// tagging every result with both services.
+/// Map one MOTN show into a `FetchedTitle`, attributing only the wanted services
+/// its per-country `streamingOptions` actually lists (falling back to the searched
+/// set when availability is missing). Shared by the seed and `/changes` paths.
+fn show_to_fetched(s: Show, country: &str, services: &[Service]) -> FetchedTitle {
+    let kind = if s.show_type == "series" {
+        TitleKind::Series
+    } else {
+        TitleKind::Movie
+    };
+    let year = s.release_year.or(s.first_air_year);
+    let length = match kind {
+        TitleKind::Movie => s.runtime.map(|m| format!("{m} min")),
+        TitleKind::Series => s.episode_count.map(|e| format!("{e} eps")),
+    };
+    let svcs = {
+        let available: HashSet<&str> = s
+            .streaming_options
+            .get(country)
+            .map(|opts| opts.iter().map(|o| o.service.id.as_str()).collect())
+            .unwrap_or_default();
+        let attributed: Vec<Service> = services
+            .iter()
+            .copied()
+            .filter(|svc| wanted_id(*svc).is_some_and(|id| available.contains(id)))
+            .collect();
+        if attributed.is_empty() {
+            services.to_vec()
+        } else {
+            attributed
+        }
+    };
+    FetchedTitle {
+        imdb_id: s.imdb_id,
+        tmdb_id: s.tmdb_id,
+        plex_guid: None,
+        title: s.title,
+        year,
+        kind,
+        imdb_rating: s.rating.map(|r| r / 10.0),
+        length,
+        description: s.overview,
+        genres: s.genres.into_iter().map(|g| g.name).collect(),
+        cast: s.cast,
+        services: svcs,
+    }
+}
+
+/// `(show_id, title)` pairs from one search page, used to seed the cache.
+type PageEntry = (String, FetchedTitle);
+
+/// Parse one search page into `(titles, next_cursor)`. (Kept for callers/tests;
+/// delegates to `parse_page_entries` and drops the show ids.)
 ///
 /// # Errors
 /// Returns an error if the JSON does not match the expected shape.
@@ -115,65 +189,137 @@ pub fn parse_page(
     country: &str,
     services: &[Service],
 ) -> anyhow::Result<(Vec<FetchedTitle>, Option<String>)> {
+    let (entries, cursor) = parse_page_entries(json, country, services)?;
+    let titles = entries.into_iter().map(|(_, ft)| ft).collect();
+    Ok((titles, cursor))
+}
+
+/// Parse one search page into `((show_id, FetchedTitle), next_cursor)` for seeding
+/// the cache.
+///
+/// # Errors
+/// Returns an error if the JSON does not match the expected shape.
+pub fn parse_page_entries(
+    json: &str,
+    country: &str,
+    services: &[Service],
+) -> anyhow::Result<(Vec<PageEntry>, Option<String>)> {
     let page: Page = serde_json::from_str(json)?;
-    let titles = page
+    let entries = page
         .shows
         .into_iter()
-        .map(|s| {
-            let kind = if s.show_type == "series" {
-                TitleKind::Series
-            } else {
-                TitleKind::Movie
-            };
-            let year = s.release_year.or(s.first_air_year);
-            let length = match kind {
-                TitleKind::Movie => s.runtime.map(|m| format!("{m} min")),
-                TitleKind::Series => s.episode_count.map(|e| format!("{e} eps")),
-            };
-            // Attribute only the wanted services this title is actually on
-            // (scoped so the borrow of `streaming_options` ends before the moves).
-            let svcs = {
-                let available: HashSet<&str> = s
-                    .streaming_options
-                    .get(country)
-                    .map(|opts| opts.iter().map(|o| o.service.id.as_str()).collect())
-                    .unwrap_or_default();
-                let attributed: Vec<Service> = services
-                    .iter()
-                    .copied()
-                    .filter(|svc| wanted_id(*svc).is_some_and(|id| available.contains(id)))
-                    .collect();
-                // A search result should be on at least one searched service; if
-                // streamingOptions is missing/unexpected, never drop the title —
-                // fall back to the searched set.
-                if attributed.is_empty() {
-                    services.to_vec()
-                } else {
-                    attributed
-                }
-            };
-            FetchedTitle {
-                imdb_id: s.imdb_id,
-                tmdb_id: s.tmdb_id,
-                plex_guid: None,
-                title: s.title,
-                year,
-                kind,
-                imdb_rating: s.rating.map(|r| r / 10.0),
-                length,
-                description: s.overview,
-                genres: s.genres.into_iter().map(|g| g.name).collect(),
-                cast: s.cast,
-                services: svcs,
-            }
-        })
+        .map(|s| (s.id.clone(), show_to_fetched(s, country, services)))
         .collect();
     let cursor = if page.has_more {
         page.next_cursor
     } else {
         None
     };
-    Ok((titles, cursor))
+    Ok((entries, cursor))
+}
+
+/// Additions/removals distilled from one or more `/changes` pages.
+#[derive(Debug, Default)]
+pub struct ParsedChanges {
+    pub additions: Vec<(String, CachedTitle)>, // (show_id, title)
+    pub removals: Vec<String>,                 // show_ids
+}
+
+impl ParsedChanges {
+    fn merge(&mut self, mut other: Self) {
+        self.additions.append(&mut other.additions);
+        self.removals.append(&mut other.removals);
+    }
+}
+
+/// Parse one `/changes` page into `(ParsedChanges, next_cursor)`.
+///
+/// `new` changes are turned into cache upserts using the embedded `shows` detail;
+/// a `new` change whose show is missing from `shows` or lacks an `imdbId` is
+/// skipped with a warning rather than aborting the sync. `removed` changes need
+/// only the `showId`. Non-show item types are ignored.
+///
+/// # Errors
+/// Returns an error only if the page JSON itself does not parse.
+pub fn parse_changes(
+    json: &str,
+    country: &str,
+    services: &[Service],
+) -> anyhow::Result<(ParsedChanges, Option<String>)> {
+    let mut page: ChangesPage = serde_json::from_str(json)?;
+    let mut out = ParsedChanges::default();
+    for ch in &page.changes {
+        if ch.item_type.as_deref().is_some_and(|t| t != "show") {
+            continue;
+        }
+        match ch.change_type.as_str() {
+            "new" => {
+                let Some(show) = page.shows.remove(&ch.show_id) else {
+                    tracing::warn!("MOTN /changes 'new' {} missing show detail", ch.show_id);
+                    continue;
+                };
+                let ft = show_to_fetched(show, country, services);
+                if ft.imdb_id.is_none() {
+                    tracing::warn!("MOTN /changes 'new' {} has no imdbId; skipping", ch.show_id);
+                    continue;
+                }
+                out.additions
+                    .push((ch.show_id.clone(), CachedTitle::from(&ft)));
+            }
+            "removed" => out.removals.push(ch.show_id.clone()),
+            _ => {}
+        }
+    }
+    let cursor = if page.has_more {
+        page.next_cursor
+    } else {
+        None
+    };
+    Ok((out, cursor))
+}
+
+/// Safety overlap subtracted from the `from` timestamp so a change straddling the
+/// previous run's boundary is never missed. Idempotent: re-applying a `new`/`removed`
+/// for the same `showId` is a no-op.
+const CHANGES_OVERLAP_SECS: i64 = 6 * 3600;
+
+/// Which fetch strategy this run uses.
+enum SyncMode {
+    /// Full pagination of `/shows/search/filters`, replacing the whole cache.
+    Seed,
+    /// `/changes` since `from` (Unix seconds), applied to the existing cache.
+    Delta { from: i64 },
+}
+
+/// Decide between a full seed and an incremental delta:
+/// - empty cache (fresh install) → `Seed`
+/// - no successful MOTN run within 25 days (gap exceeds the 31-day window) → `Seed`
+/// - otherwise → `Delta` from the last-ok timestamp minus the overlap buffer.
+///
+/// # Errors
+/// Returns an error if any database query fails.
+async fn decide_mode(pool: &SqlitePool) -> anyhow::Result<SyncMode> {
+    if motn_cache::count(pool).await? == 0 || !sync_runs::motn_recent_ok(pool).await? {
+        return Ok(SyncMode::Seed);
+    }
+    let last_ok = sync_runs::last_ok_unix(pool).await?.unwrap_or(0);
+    Ok(SyncMode::Delta {
+        from: last_ok.saturating_sub(CHANGES_OVERLAP_SECS).max(0),
+    })
+}
+
+/// Apply parsed `/changes` to the cache: upsert additions, delete removals.
+///
+/// # Errors
+/// Returns an error if any cache write fails.
+async fn apply_changes(pool: &SqlitePool, parsed: &ParsedChanges) -> anyhow::Result<()> {
+    for (show_id, ct) in &parsed.additions {
+        motn_cache::upsert(pool, show_id, ct).await?;
+    }
+    for show_id in &parsed.removals {
+        motn_cache::delete(pool, show_id).await?;
+    }
+    Ok(())
 }
 
 /// The MOTN catalog id for a wanted service (`Disney` → "disney", etc.).
@@ -186,30 +332,26 @@ pub struct MotnClient {
     client: reqwest::Client,
     api_key: String,
     country: String,
+    pool: SqlitePool,
 }
 
 impl MotnClient {
     #[must_use]
-    pub fn new(api_key: String, country: String) -> Self {
+    pub fn new(api_key: String, country: String, pool: SqlitePool) -> Self {
         Self {
             client: reqwest::Client::new(),
             api_key,
             country,
+            pool,
         }
     }
-}
 
-#[async_trait]
-impl CatalogueSource for MotnClient {
-    fn name(&self) -> &'static str {
-        "motn"
-    }
-
-    fn services(&self) -> &'static [Service] {
-        &[Service::Disney, Service::Crunchyroll]
-    }
-
-    async fn fetch(&self) -> anyhow::Result<Vec<FetchedTitle>> {
+    /// Resolve `(catalogs_csv, services)` from `/countries`, or `None` if this
+    /// country lists none of the wanted services.
+    ///
+    /// # Errors
+    /// Returns an error if the HTTP request fails or the response cannot be read.
+    async fn resolve_catalogs(&self) -> anyhow::Result<Option<(String, Vec<Service>)>> {
         let countries = self
             .client
             .get(format!("{MOTN_BASE}/countries"))
@@ -225,35 +367,130 @@ impl CatalogueSource for MotnClient {
                 "MOTN lists none of [disney, crunchyroll] for {}",
                 self.country
             );
-            return Ok(Vec::new());
+            return Ok(None);
         }
-        let catalog_ids: Vec<String> = resolved.iter().map(|(_, id)| id.clone()).collect();
-        let services: Vec<Service> = resolved.iter().map(|(s, _)| *s).collect();
-        let catalogs = catalog_ids.join(",");
+        let catalogs = resolved
+            .iter()
+            .map(|(_, id)| id.clone())
+            .collect::<Vec<_>>()
+            .join(",");
+        let services = resolved.iter().map(|(s, _)| *s).collect();
+        Ok(Some((catalogs, services)))
+    }
 
-        let mut out = Vec::new();
+    /// Full pagination of `/shows/search/filters` → `(show_id, CachedTitle)` entries.
+    ///
+    /// # Errors
+    /// Returns an error if any HTTP request fails or any page cannot be parsed.
+    async fn seed_pages(
+        &self,
+        catalogs: &str,
+        services: &[Service],
+    ) -> anyhow::Result<Vec<(String, CachedTitle)>> {
+        let mut out: Vec<(String, CachedTitle)> = Vec::new();
         let mut cursor: Option<String> = None;
         loop {
             let mut req = self
                 .client
                 .get(format!("{MOTN_BASE}/shows/search/filters"))
                 .header("X-API-Key", &self.api_key)
-                .query(&[
-                    ("country", self.country.as_str()),
-                    ("catalogs", catalogs.as_str()),
-                ]);
+                .query(&[("country", self.country.as_str()), ("catalogs", catalogs)]);
             if let Some(c) = &cursor {
                 req = req.query(&[("cursor", c.as_str())]);
             }
             let body = req.send().await?.error_for_status()?.text().await?;
-            let (mut titles, next) = parse_page(&body, &self.country, &services)?;
-            out.append(&mut titles);
+            let (entries, next) = parse_page_entries(&body, &self.country, services)?;
+            for (id, ft) in entries {
+                out.push((id, CachedTitle::from(&ft)));
+            }
             match next {
                 Some(c) => cursor = Some(c),
                 None => break,
             }
         }
         Ok(out)
+    }
+
+    /// Paginate `/changes` for one `change_type` since `from` (Unix seconds).
+    ///
+    /// # Errors
+    /// Returns an error if any HTTP request fails or any page cannot be parsed.
+    async fn changes_pages(
+        &self,
+        catalogs: &str,
+        services: &[Service],
+        change_type: &str,
+        from: i64,
+    ) -> anyhow::Result<ParsedChanges> {
+        let mut out = ParsedChanges::default();
+        let from_str = from.to_string();
+        let mut cursor: Option<String> = None;
+        loop {
+            let mut req = self
+                .client
+                .get(format!("{MOTN_BASE}/changes"))
+                .header("X-API-Key", &self.api_key)
+                .query(&[
+                    ("country", self.country.as_str()),
+                    ("catalogs", catalogs),
+                    ("item_type", "show"),
+                    ("change_type", change_type),
+                    ("from", from_str.as_str()),
+                ]);
+            if let Some(c) = &cursor {
+                req = req.query(&[("cursor", c.as_str())]);
+            }
+            let body = req.send().await?.error_for_status()?.text().await?;
+            let (parsed, next) = parse_changes(&body, &self.country, services)?;
+            out.merge(parsed);
+            match next {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
+        }
+        Ok(out)
+    }
+}
+
+#[async_trait]
+impl CatalogueSource for MotnClient {
+    fn name(&self) -> &'static str {
+        "motn"
+    }
+
+    fn services(&self) -> &'static [Service] {
+        &[Service::Disney, Service::Crunchyroll]
+    }
+
+    async fn fetch(&self) -> anyhow::Result<Vec<FetchedTitle>> {
+        let Some((catalogs, services)) = self.resolve_catalogs().await? else {
+            return Ok(Vec::new()); // none of [disney, crunchyroll] in this country
+        };
+
+        match decide_mode(&self.pool).await? {
+            SyncMode::Seed => {
+                let entries = self.seed_pages(&catalogs, &services).await?;
+                tracing::info!("MOTN full seed: {} shows", entries.len());
+                motn_cache::replace_all(&self.pool, &entries).await?;
+            }
+            SyncMode::Delta { from } => {
+                let mut parsed = ParsedChanges::default();
+                for change_type in ["new", "removed"] {
+                    let page = self
+                        .changes_pages(&catalogs, &services, change_type, from)
+                        .await?;
+                    parsed.merge(page);
+                }
+                tracing::info!(
+                    "MOTN delta: +{} -{}",
+                    parsed.additions.len(),
+                    parsed.removals.len()
+                );
+                apply_changes(&self.pool, &parsed).await?;
+            }
+        }
+
+        motn_cache::load_all(&self.pool).await
     }
 }
 
@@ -307,8 +544,7 @@ mod tests {
         // Combined disney,crunchyroll search: each title must be tagged only with
         // the service(s) its streamingOptions[gb] actually lists, not both.
         let json = include_str!("../../tests/fixtures/motn_search_mixed.json");
-        let (titles, _) =
-            parse_page(json, "gb", &[Service::Disney, Service::Crunchyroll]).unwrap();
+        let (titles, _) = parse_page(json, "gb", &[Service::Disney, Service::Crunchyroll]).unwrap();
         assert_eq!(
             titles[0].services,
             vec![Service::Disney],
@@ -327,5 +563,146 @@ mod tests {
         let json = r#"{ "shows": [ { "title": "X", "showType": "movie" } ], "hasMore": false }"#;
         let (titles, _) = parse_page(json, "gb", &[Service::Disney]).unwrap();
         assert_eq!(titles[0].services, vec![Service::Disney]);
+    }
+
+    #[test]
+    fn parse_page_entries_pairs_show_id_with_title() {
+        let json = r#"{
+            "shows": [
+                {"id":"100","imdbId":"tt1","title":"A","showType":"movie","releaseYear":2020,
+                 "streamingOptions":{"gb":[{"service":{"id":"disney"}}]}}
+            ],
+            "hasMore": false
+        }"#;
+        let (entries, cursor) = parse_page_entries(json, "gb", &[Service::Disney]).unwrap();
+        assert_eq!(cursor, None);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "100");
+        assert_eq!(entries[0].1.title, "A");
+        assert_eq!(entries[0].1.services, vec![Service::Disney]);
+    }
+
+    #[test]
+    fn parse_changes_collects_new_and_removed() {
+        let json = r#"{
+            "changes": [
+                {"changeType":"new","itemType":"show","showId":"100"},
+                {"changeType":"removed","itemType":"show","showId":"200"}
+            ],
+            "shows": {
+                "100": {"id":"100","imdbId":"tt1","title":"A","showType":"movie",
+                        "streamingOptions":{"gb":[{"service":{"id":"disney"}}]}}
+            },
+            "hasMore": false
+        }"#;
+        let (parsed, cursor) = parse_changes(json, "gb", &[Service::Disney]).unwrap();
+        assert_eq!(cursor, None);
+        assert_eq!(parsed.additions.len(), 1);
+        assert_eq!(parsed.additions[0].0, "100");
+        assert_eq!(parsed.removals, vec!["200".to_string()]);
+    }
+
+    #[test]
+    fn parse_changes_skips_new_without_show_detail_or_imdb() {
+        // "new" 300 has no entry in `shows`; "new" 400 has detail but no imdbId.
+        let json = r#"{
+            "changes": [
+                {"changeType":"new","itemType":"show","showId":"300"},
+                {"changeType":"new","itemType":"show","showId":"400"}
+            ],
+            "shows": {
+                "400": {"id":"400","title":"NoImdb","showType":"movie",
+                        "streamingOptions":{"gb":[{"service":{"id":"disney"}}]}}
+            },
+            "hasMore": false
+        }"#;
+        let (parsed, _) = parse_changes(json, "gb", &[Service::Disney]).unwrap();
+        assert!(parsed.additions.is_empty());
+        assert!(parsed.removals.is_empty());
+    }
+
+    #[test]
+    fn parse_changes_propagates_cursor() {
+        let json = r#"{"changes":[],"shows":{},"hasMore":true,"nextCursor":"abc"}"#;
+        let (_, cursor) = parse_changes(json, "gb", &[Service::Disney]).unwrap();
+        assert_eq!(cursor, Some("abc".to_string()));
+    }
+
+    use crate::db::{init_pool, motn_cache, sync_runs};
+
+    async fn test_pool() -> (tempfile::TempDir, sqlx::SqlitePool) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        let url = format!("sqlite:{}", path.to_string_lossy().replace('\\', "/"));
+        let pool = init_pool(&url).await.unwrap();
+        (dir, pool)
+    }
+
+    fn cached(title: &str) -> CachedTitle {
+        CachedTitle {
+            imdb_id: Some(format!("tt-{title}")),
+            tmdb_id: None,
+            title: title.to_string(),
+            year: None,
+            kind: "movie".into(),
+            imdb_rating: None,
+            length: None,
+            description: None,
+            genres: vec![],
+            cast: vec![],
+            services: vec!["disney".into()],
+        }
+    }
+
+    #[tokio::test]
+    async fn decide_mode_seeds_on_empty_cache() {
+        let (_dir, pool) = test_pool().await;
+        assert!(matches!(decide_mode(&pool).await.unwrap(), SyncMode::Seed));
+    }
+
+    #[tokio::test]
+    async fn decide_mode_seeds_when_no_recent_ok_run() {
+        let (_dir, pool) = test_pool().await;
+        motn_cache::upsert(&pool, "1", &cached("A")).await.unwrap();
+        // Cache non-empty but no ok run within 25 days -> Seed (recovery re-seed).
+        assert!(matches!(decide_mode(&pool).await.unwrap(), SyncMode::Seed));
+    }
+
+    #[tokio::test]
+    async fn decide_mode_deltas_when_cache_and_recent_ok() {
+        let (_dir, pool) = test_pool().await;
+        motn_cache::upsert(&pool, "1", &cached("A")).await.unwrap();
+        sync_runs::record(&pool, "disney", "ok", 1, None)
+            .await
+            .unwrap();
+        match decide_mode(&pool).await.unwrap() {
+            SyncMode::Delta { from } => assert!(from > 0),
+            SyncMode::Seed => panic!("expected delta"),
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_changes_adds_and_removes() {
+        let (_dir, pool) = test_pool().await;
+        motn_cache::upsert(&pool, "keep", &cached("Keep"))
+            .await
+            .unwrap();
+        motn_cache::upsert(&pool, "drop", &cached("Drop"))
+            .await
+            .unwrap();
+        let parsed = ParsedChanges {
+            additions: vec![("new1".to_string(), cached("New"))],
+            removals: vec!["drop".to_string()],
+        };
+        apply_changes(&pool, &parsed).await.unwrap();
+        let titles: Vec<String> = motn_cache::load_all(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|t| t.title)
+            .collect();
+        assert!(titles.contains(&"Keep".to_string()));
+        assert!(titles.contains(&"New".to_string()));
+        assert!(!titles.contains(&"Drop".to_string()));
     }
 }

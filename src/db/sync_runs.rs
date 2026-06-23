@@ -96,6 +96,42 @@ pub async fn catalogue_stats(pool: &SqlitePool) -> anyhow::Result<CatalogueStats
     })
 }
 
+/// Unix-seconds timestamp of the newest successful MOTN-owned run
+/// (`disney`/`crunchyroll`), or `None` if none has succeeded. Drives the
+/// `/changes` `from` parameter.
+///
+/// # Errors
+/// Returns an error if the query fails.
+pub async fn last_ok_unix(pool: &SqlitePool) -> anyhow::Result<Option<i64>> {
+    let ts = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT CAST(strftime('%s', MAX(finished_at)) AS INTEGER)
+         FROM sync_runs
+         WHERE source IN ('disney', 'crunchyroll') AND status = 'ok'",
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(ts)
+}
+
+/// Whether a successful MOTN-owned run finished within the last 25 days — under
+/// MOTN's 31-day `/changes` window, so a delta sync would not miss changes.
+///
+/// # Errors
+/// Returns an error if the query fails.
+pub async fn motn_recent_ok(pool: &SqlitePool) -> anyhow::Result<bool> {
+    let recent = sqlx::query_scalar::<_, i64>(
+        "SELECT EXISTS(
+            SELECT 1 FROM sync_runs
+            WHERE source IN ('disney', 'crunchyroll')
+              AND status = 'ok'
+              AND finished_at >= datetime('now', '-25 days')
+        )",
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(recent != 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,5 +170,29 @@ mod tests {
         assert_eq!(s.titles, 28);
         assert_eq!(s.movies + s.series, 28);
         assert_eq!(s.embedded, 0);
+    }
+
+    #[tokio::test]
+    async fn last_ok_and_recent_reflect_recorded_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        let url = format!("sqlite:{}", path.to_string_lossy().replace('\\', "/"));
+        let pool = crate::db::init_pool(&url).await.unwrap();
+
+        // No runs yet.
+        assert_eq!(last_ok_unix(&pool).await.unwrap(), None);
+        assert!(!motn_recent_ok(&pool).await.unwrap());
+
+        // A failed run does not count.
+        record(&pool, "disney", "error", 0, Some("boom"))
+            .await
+            .unwrap();
+        assert_eq!(last_ok_unix(&pool).await.unwrap(), None);
+        assert!(!motn_recent_ok(&pool).await.unwrap());
+
+        // A successful run counts and is recent.
+        record(&pool, "crunchyroll", "ok", 10, None).await.unwrap();
+        assert!(last_ok_unix(&pool).await.unwrap().is_some());
+        assert!(motn_recent_ok(&pool).await.unwrap());
     }
 }
