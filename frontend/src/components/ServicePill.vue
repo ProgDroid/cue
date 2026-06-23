@@ -32,6 +32,6 @@ const svc = services[props.service]
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
   font-size: 9.5px;
   letter-spacing: 0.03em;
-  color: #d2d6dd;
+  color: var(--text-secondary-strong, #d2d6dd);
 }
 </style>

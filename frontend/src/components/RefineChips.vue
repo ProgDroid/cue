@@ -42,7 +42,7 @@ const store = useCatalogueStore()
   background: #1d2129;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 999px;
-  color: var(--text-secondary, #d2d6dd);
+  color: var(--text-secondary-strong, #d2d6dd);
   font-family: var(--font-ui, 'Hanken Grotesk', system-ui, sans-serif);
   font-size: 12.5px;
   cursor: pointer;

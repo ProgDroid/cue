@@ -442,7 +442,7 @@ const simFailed = ref<Record<number, boolean>>({})
 .imdb-label {
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
   font-size: 10px;
-  color: #8a7a30;
+  color: var(--accent-dim, #8a7a30);
 }
 
 /* Title + fact line */
@@ -572,7 +572,7 @@ const simFailed = ref<Record<number, boolean>>({})
   margin-top: 7px;
   font-size: 12px;
   font-weight: 600;
-  color: #d2d6dd;
+  color: var(--text-secondary-strong, #d2d6dd);
   line-height: 1.25;
   display: -webkit-box;
   -webkit-line-clamp: 2;

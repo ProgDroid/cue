@@ -87,8 +87,9 @@ live but still working acceptably:
   BOM on the first header, CRLF line endings, and the full 14-column header.
   The automated suite proves the contract + persistence; only a real export
   exercises these CSV quirks.
-  Non-blocking polish noted at merge: result line has no singular/plural
-  handling ("1 rows skipped"); `matched` scans the full `titles` table
+  Non-blocking polish noted at merge: ~~result line has no singular/plural
+  handling ("1 rows skipped")~~ (fixed 2026-06-23, see Polish section);
+  `matched` scans the full `titles` table
   (fine at ~5k, scales with catalogue not import); endpoint test harness
   registers via plain `cfg.route()` so it wouldn't catch loss of the
   production `PayloadConfig`; `invalid_utf8` branch untested;
@@ -117,11 +118,17 @@ live but still working acceptably:
 
 ## Polish (cosmetic, non-blocking)
 
-- Two `DetailView` colour literals remain bare because no design token matches
-  their value: `#8a7a30` (dimmed-amber IMDb label) and `#d2d6dd` (sim-card
-  title — nearest is `--text-secondary` `#c2c7d0`, which would shift the
-  rendered colour). Add tokens for them if they should be themeable; otherwise
-  leave as intentional one-offs.
+- ✅ **Bare colour literals tokenized — DONE 2026-06-23.** Added two tokens to
+  `frontend/src/design/tokens.css` at their exact values (no rendered shift):
+  `--accent-dim: #8a7a30` (dimmed-amber IMDb label) and
+  `--text-secondary-strong: #d2d6dd` (brighter secondary). Consumers now use the
+  `var(--token, #literal)` form: `DetailView` `.imdb-label` + `.sim-title`,
+  `ServicePill` `.label`, and `RefineChips` `.chip` (the chip previously read
+  `var(--text-secondary, #d2d6dd)`, which actually rendered `#c2c7d0` — a latent
+  mismatch vs the design handoff, now fixed to the intended `#d2d6dd`).
+- ✅ **IMDb-import result singular/plural — DONE 2026-06-23.** Added a small
+  `plural(n, word)` helper in `SettingsView.vue`; the summary now reads
+  "1 rating"/"2 ratings" and "1 row skipped"/"2 rows skipped".
 
 ## Plan 5 deferred minors — ✅ ALL CLEARED 2026-06-23
 

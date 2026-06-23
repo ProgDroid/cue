@@ -76,6 +76,9 @@ const importing = ref(false)
 const importMsg = ref('')
 const importError = ref('')
 
+// "1 rating" / "2 ratings" — naive English pluralization for the import summary.
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+
 async function refresh() {
   try {
     const wasRunning = busy.value
@@ -122,7 +125,7 @@ async function onImportFile(e: Event) {
   try {
     const csv = await file.text()
     const r = await importRatings(csv)
-    importMsg.value = `Imported ${r.imported} ratings · ${r.matched} in your library · ${r.skipped} rows skipped`
+    importMsg.value = `Imported ${plural(r.imported, 'rating')} · ${r.matched} in your library · ${plural(r.skipped, 'row')} skipped`
     // Re-fetch so imported ratings surface without a manual reload.
     // Store accessed lazily here (not at setup) so tests that mount without
     // Pinia are unaffected.
