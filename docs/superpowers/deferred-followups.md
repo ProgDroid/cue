@@ -99,3 +99,14 @@ All non-blocking; the whole-branch review verdict was "Ready to merge".
 - ✅ **Micro-opts** — `merge::merge` now sizes its maps with capacity hints and
   moves (not clones) first-seen genres; `catalogue_stats` collapsed 4 queries
   into 2 (one aggregate over `titles`, one count over `title_embeddings`).
+
+## MOTN incremental sync — post-merge verification (Plan Feat/motn-incremental-sync)
+
+- **MOTN incremental sync — live verify (post-merge):** On the server, run one sync
+  with a non-empty cache and confirm logs show `MOTN delta: +N -M` (not a full seed),
+  and that the monthly request counter increments by only a few. Capture a real
+  `/changes` response as a fixture and confirm the embedded `shows` map carries
+  `id`/`imdbId`/`streamingOptions` (spec §12 assumption). If `shows` is an array, not
+  a map, adjust `ChangesPage.shows` to `Vec<Show>` keyed via each show's `id`.
+- **MOTN cache state in settings UI (deferred):** `/api/sync/status` could surface
+  cache size + last seed vs delta mode. Out of scope for the incremental-sync plan.
