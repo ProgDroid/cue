@@ -252,12 +252,19 @@ mod tests {
             value: "https://cdn/p.jpg".into(),
             remote: true,
         });
+        motn_second.backdrop = Some(ImageRef {
+            value: "https://cdn/b.jpg".into(),
+            remote: true,
+        });
 
         let out = merge(vec![plex_first, motn_second]);
         assert_eq!(out.len(), 1);
         let p = out[0].poster.as_ref().unwrap();
         assert!(p.remote, "remote CDN ref must win over a Plex path");
         assert_eq!(p.value, "https://cdn/p.jpg");
+        let b = out[0].backdrop.as_ref().unwrap();
+        assert!(b.remote);
+        assert_eq!(b.value, "https://cdn/b.jpg");
     }
 
     #[test]
@@ -275,7 +282,19 @@ mod tests {
         });
 
         let out = merge(vec![motn_first, plex_second]);
-        assert!(out[0].poster.as_ref().unwrap().remote);
+        let p = out[0].poster.as_ref().unwrap();
+        assert!(p.remote);
+        assert_eq!(p.value, "https://cdn/p.jpg");
+    }
+
+    #[test]
+    fn merge_leaves_images_none_when_absent() {
+        let a = ft(Some("tt1"), TitleKind::Movie, vec![], vec![Service::Plex]);
+        let b = ft(Some("tt1"), TitleKind::Movie, vec![], vec![Service::Disney]);
+        let out = merge(vec![a, b]);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].poster.is_none());
+        assert!(out[0].backdrop.is_none());
     }
 
     // test helper
