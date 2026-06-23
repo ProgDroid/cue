@@ -1,3 +1,4 @@
+use actix_web::error::InternalError;
 use actix_web::{web, HttpResponse, Responder};
 use serde::Deserialize;
 use sqlx::SqlitePool;
@@ -6,12 +7,28 @@ use crate::db::user_data::{self, KeyLookup};
 
 #[derive(Deserialize)]
 pub struct RatingBody {
-    pub rating: i64,
+    pub rating: u8,
 }
 
 #[derive(Deserialize)]
 pub struct WatchedBody {
     pub watched: bool,
+}
+
+/// JSON body config with a custom extraction-error response.
+///
+/// Renders body-extraction failures as the same `{"error": …}` JSON shape used
+/// for domain-validation errors, instead of actix's default plain-text 400.
+/// Attach to the rating/watched resources.
+#[must_use]
+pub fn rating_json_config() -> web::JsonConfig {
+    web::JsonConfig::default().error_handler(|err, _req| {
+        InternalError::from_response(
+            err,
+            HttpResponse::BadRequest().json(serde_json::json!({ "error": "invalid_body" })),
+        )
+        .into()
+    })
 }
 
 /// Resolve the title id to its key, or return the appropriate early response
@@ -46,7 +63,7 @@ pub async fn set_rating(
         Ok(k) => k,
         Err(resp) => return resp,
     };
-    match user_data::set_rating(pool.get_ref(), &key, rating).await {
+    match user_data::set_rating(pool.get_ref(), &key, i64::from(rating)).await {
         Ok(()) => HttpResponse::Ok().json(serde_json::json!({ "rating": rating })),
         Err(e) => {
             tracing::error!("set_rating failed: {e:#}");
@@ -111,13 +128,23 @@ mod tests {
         .bind(imdb).fetch_one(pool).await.unwrap()
     }
 
-    // Register only the three user-data routes — avoids spelling the App<impl
+    // Register only the user-data routes — avoids spelling the App<impl
     // ServiceFactory<...>> type and keeps the test app isolated from other
-    // handlers' Data deps (SyncRunner, Embedder, AskModel).
+    // handlers' Data deps (SyncRunner, Embedder, AskModel). Mirrors production
+    // wiring in `routes::configure`, including the shared `rating_json_config`,
+    // so the malformed-body 400 shape is exercised here too.
     fn test_routes(cfg: &mut web::ServiceConfig) {
-        cfg.route("/api/titles/{id}/rating", web::put().to(set_rating))
-            .route("/api/titles/{id}/rating", web::delete().to(clear_rating))
-            .route("/api/titles/{id}/watched", web::put().to(set_watched));
+        cfg.service(
+            web::resource("/api/titles/{id}/rating")
+                .app_data(rating_json_config())
+                .route(web::put().to(set_rating))
+                .route(web::delete().to(clear_rating)),
+        )
+        .service(
+            web::resource("/api/titles/{id}/watched")
+                .app_data(rating_json_config())
+                .route(web::put().to(set_watched)),
+        );
     }
 
     #[actix_web::test]
@@ -238,5 +265,86 @@ mod tests {
         assert_eq!(resp.status(), 200);
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["watched"], true);
+    }
+
+    #[actix_web::test]
+    async fn delete_rating_unknown_title_is_404() {
+        let (pool, _dir) = fresh_pool().await;
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(pool))
+                .configure(test_routes),
+        )
+        .await;
+        let req = test::TestRequest::delete()
+            .uri("/api/titles/4242/rating")
+            .to_request();
+        assert_eq!(test::call_service(&app, req).await.status(), 404);
+    }
+
+    #[actix_web::test]
+    async fn delete_rating_null_imdb_is_422() {
+        let (pool, _dir) = fresh_pool().await;
+        let id = insert_title(&pool, None).await;
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(pool))
+                .configure(test_routes),
+        )
+        .await;
+        let req = test::TestRequest::delete()
+            .uri(&format!("/api/titles/{id}/rating"))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 422);
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["error"], "no_imdb_id");
+    }
+
+    #[actix_web::test]
+    async fn put_rating_malformed_body_is_json_400() {
+        let (pool, _dir) = fresh_pool().await;
+        let id = insert_title(&pool, Some("tt100")).await;
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(pool))
+                .configure(test_routes),
+        )
+        .await;
+        // `rating` is the wrong type — extraction fails before the handler runs.
+        let req = test::TestRequest::put()
+            .uri(&format!("/api/titles/{id}/rating"))
+            .set_json(serde_json::json!({ "rating": "seven" }))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 400);
+        let body = test::read_body(resp).await;
+        let json: serde_json::Value =
+            serde_json::from_slice(&body).expect("malformed-body 400 should be JSON");
+        assert_eq!(json["error"], "invalid_body");
+    }
+
+    #[actix_web::test]
+    async fn put_rating_negative_is_json_400() {
+        let (pool, _dir) = fresh_pool().await;
+        let id = insert_title(&pool, Some("tt100")).await;
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(pool))
+                .configure(test_routes),
+        )
+        .await;
+        // With `rating: u8`, a negative value can't deserialize: it's rejected at
+        // extraction as a malformed body, not by the 1-10 range check.
+        let req = test::TestRequest::put()
+            .uri(&format!("/api/titles/{id}/rating"))
+            .set_json(serde_json::json!({ "rating": -3 }))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 400);
+        let body = test::read_body(resp).await;
+        let json: serde_json::Value =
+            serde_json::from_slice(&body).expect("negative-rating 400 should be JSON");
+        assert_eq!(json["error"], "invalid_body");
     }
 }

@@ -21,14 +21,19 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/ask/refine", web::post().to(ask::refine))
             .route("/sync", web::post().to(sync::trigger))
             .route("/sync/status", web::get().to(sync::status))
-            .route("/titles/{id}/rating", web::put().to(user_data::set_rating))
-            .route(
-                "/titles/{id}/rating",
-                web::delete().to(user_data::clear_rating),
+            .service(
+                // Shared JsonConfig renders malformed bodies as {"error":…}
+                // JSON (matching the domain-validation error shape) instead of
+                // actix's default plain-text 400.
+                web::resource("/titles/{id}/rating")
+                    .app_data(user_data::rating_json_config())
+                    .route(web::put().to(user_data::set_rating))
+                    .route(web::delete().to(user_data::clear_rating)),
             )
-            .route(
-                "/titles/{id}/watched",
-                web::put().to(user_data::set_watched),
+            .service(
+                web::resource("/titles/{id}/watched")
+                    .app_data(user_data::rating_json_config())
+                    .route(web::put().to(user_data::set_watched)),
             )
             .route("/titles/{id}/poster", web::get().to(images::poster))
             .route("/titles/{id}/backdrop", web::get().to(images::backdrop))

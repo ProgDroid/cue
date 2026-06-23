@@ -286,6 +286,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn manual_watch_unique_index_rejects_duplicate() {
+        let (pool, _dir) = fresh_pool().await;
+        sqlx::query("INSERT INTO watch_history (imdb_id, source) VALUES ('tt100', 'manual')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // A second manual row for the same title must be rejected: manual-watch
+        // idempotency is a hard invariant (partial UNIQUE INDEX), not just a
+        // guard in `set_watched`.
+        let dup =
+            sqlx::query("INSERT INTO watch_history (imdb_id, source) VALUES ('tt100', 'manual')")
+                .execute(&pool)
+                .await;
+        assert!(
+            dup.is_err(),
+            "duplicate manual row should violate the partial unique index"
+        );
+
+        // Plex rows are outside the partial index, so multiple plex rows for the
+        // same title remain allowed (Plex history can have repeat views).
+        for _ in 0..2 {
+            sqlx::query("INSERT INTO watch_history (imdb_id, source) VALUES ('tt100', 'plex')")
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
     async fn replace_watch_history_replaces_plex_and_preserves_manual() {
         use crate::sync::WatchRecord;
         let (pool, _dir) = fresh_pool().await;
