@@ -36,6 +36,34 @@ impl Config {
         Self::load(|k| std::env::var(k).ok())
     }
 
+    /// Validate values that otherwise only fail deep into startup (`BIND_ADDR`
+    /// at `.bind()`, `SYNC_CRON` at scheduler build) — after the pool is opened
+    /// and a startup sync may already be running. Returns a message naming the
+    /// offending value so a bad `.env` fails fast and legibly.
+    ///
+    /// # Errors
+    /// Returns `Err` if `BIND_ADDR` is not a resolvable `host:port` or
+    /// `SYNC_CRON` is not a 6-field (seconds-precision) cron expression.
+    pub fn validate(&self) -> Result<(), String> {
+        use std::net::ToSocketAddrs;
+        self.bind_addr.to_socket_addrs().map_err(|e| {
+            format!(
+                "BIND_ADDR `{}` is not a bindable host:port: {e}",
+                self.bind_addr
+            )
+        })?;
+        if let Some(cron) = &self.sync_cron {
+            let fields = cron.split_whitespace().count();
+            if fields != 6 {
+                return Err(format!(
+                    "SYNC_CRON `{cron}` must have 6 space-separated fields \
+                     (sec min hour day-of-month month day-of-week), got {fields}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// On-disk path of the `SQLite` file, or `None` for an in-memory database.
     #[must_use]
     pub fn sqlite_path(&self) -> Option<PathBuf> {
@@ -92,5 +120,34 @@ mod tests {
     fn sqlite_path_is_none_for_memory() {
         let cfg = Config::load(getter(HashMap::from([("DATABASE_URL", "sqlite::memory:")])));
         assert_eq!(cfg.sqlite_path(), None);
+    }
+
+    #[test]
+    fn validate_accepts_defaults_and_six_field_cron() {
+        let mut m = HashMap::new();
+        m.insert("SYNC_CRON", "0 0 3 * * *");
+        assert!(Config::load(getter(m)).validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_bad_bind_addr_naming_it() {
+        let mut m = HashMap::new();
+        m.insert("BIND_ADDR", "not-an-address");
+        let err = Config::load(getter(m)).validate().unwrap_err();
+        assert!(
+            err.contains("BIND_ADDR"),
+            "error should name the var: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_five_field_cron_naming_it() {
+        let mut m = HashMap::new();
+        m.insert("SYNC_CRON", "0 3 * * *"); // 5-field crontab, missing seconds
+        let err = Config::load(getter(m)).validate().unwrap_err();
+        assert!(
+            err.contains("SYNC_CRON"),
+            "error should name the var: {err}"
+        );
     }
 }

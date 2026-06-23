@@ -6,6 +6,19 @@ use serde::{Deserialize, Serialize};
 use crate::services::anthropic::AskAnswer;
 use crate::services::ask_engine::{AskEngine, AskError};
 
+/// Upper bound on client-supplied `ids`/`baseIds` arrays. The 256 KB JSON cap
+/// already bounds payload size; this rejects pathologically large id sets before
+/// they drive per-element work, well above any real on-screen result set.
+const MAX_IDS: usize = 1000;
+
+fn too_many(ids: Option<&Vec<i64>>) -> bool {
+    ids.is_some_and(|v| v.len() > MAX_IDS)
+}
+
+fn too_many_ids() -> HttpResponse {
+    HttpResponse::BadRequest().json(serde_json::json!({ "error": "too_many_ids" }))
+}
+
 #[derive(Deserialize)]
 pub struct AskReq {
     pub query: String,
@@ -58,6 +71,9 @@ fn respond(result: Result<AskAnswer, AskError>) -> HttpResponse {
 
 pub async fn ask(engine: web::Data<Arc<AskEngine>>, body: web::Json<AskReq>) -> impl Responder {
     let req = body.into_inner();
+    if too_many(req.base_ids.as_ref()) {
+        return too_many_ids();
+    }
     respond(engine.ask(&req.query, req.base_ids).await)
 }
 
@@ -66,6 +82,9 @@ pub async fn similar(
     body: web::Json<SimilarReq>,
 ) -> impl Responder {
     let req = body.into_inner();
+    if too_many(req.base_ids.as_ref()) {
+        return too_many_ids();
+    }
     respond(engine.similar(req.anchor_id, req.base_ids).await)
 }
 
@@ -74,6 +93,9 @@ pub async fn refine(
     body: web::Json<RefineReq>,
 ) -> impl Responder {
     let req = body.into_inner();
+    if req.ids.len() > MAX_IDS {
+        return too_many_ids();
+    }
     respond(engine.refine(&req.kind, &req.ids).await)
 }
 
@@ -110,6 +132,24 @@ mod tests {
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status().as_u16(), 503);
+    }
+
+    #[actix_web::test]
+    async fn refine_with_too_many_ids_is_400() {
+        let (engine, _dir) = engine_no_models().await;
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(engine))
+                .configure(routes::configure),
+        )
+        .await;
+        let ids: Vec<i64> = (0..=i64::try_from(MAX_IDS).unwrap()).collect();
+        let req = test::TestRequest::post()
+            .uri("/api/ask/refine")
+            .set_json(serde_json::json!({ "kind": "shorter", "ids": ids }))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 400);
     }
 
     #[actix_web::test]

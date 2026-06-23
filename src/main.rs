@@ -17,6 +17,13 @@ async fn main() -> std::io::Result<()> {
 
     let cfg = Config::from_env();
 
+    // Fail fast on a bad BIND_ADDR / SYNC_CRON, naming the value — before the
+    // pool opens and a startup sync may kick off.
+    if let Err(e) = cfg.validate() {
+        tracing::error!("invalid configuration: {e}");
+        return Err(std::io::Error::other(e));
+    }
+
     if let Some(path) = cfg.sqlite_path() {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -81,13 +88,13 @@ async fn main() -> std::io::Result<()> {
     }
     let runner = cue::sync::SyncRunner::new(pool.clone(), sources, embedder);
 
-    // Sync once on startup if the catalogue is empty or still just the seed.
-    let title_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM titles")
-        .fetch_one(&pool)
+    // Sync once on startup until a real sync has ever succeeded (fresh DB or
+    // seed-only catalogue). Keys off sync history, not a hard-coded seed size.
+    let ever_synced = cue::db::sync_runs::any_sync_ok(&pool)
         .await
         .map_err(std::io::Error::other)?;
-    if title_count <= 28 && runner.try_start() {
-        tracing::info!("startup sync triggered (catalogue had {title_count} titles)");
+    if !ever_synced && runner.try_start() {
+        tracing::info!("startup sync triggered (no prior successful sync)");
     }
 
     // Daily (configurable) scheduled sync.

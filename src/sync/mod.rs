@@ -192,6 +192,13 @@ pub async fn run_sync(
     } else {
         tracing::warn!("OPENAI_API_KEY unset — synced titles left unembedded");
     }
+
+    // Bound sync_runs growth: keep the newest 100 rows per source. Non-fatal.
+    match sync_runs::prune_old_runs(pool, 100).await {
+        Ok(n) if n > 0 => tracing::info!("pruned {n} old sync_runs rows"),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("sync_runs prune failed: {e:#}"),
+    }
     Ok(())
 }
 

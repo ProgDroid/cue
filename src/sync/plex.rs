@@ -174,6 +174,26 @@ impl PlexClient {
             .text()
             .await?)
     }
+
+    /// Walk every movie/show library section, applying `parse` to each section's
+    /// `/all` body and flattening the results. Shared by `fetch` (titles) and
+    /// `fetch_watch_history` (watch records) — only the per-body parser differs.
+    async fn for_each_section<T>(
+        &self,
+        parse: impl Fn(&str) -> anyhow::Result<Vec<T>>,
+    ) -> anyhow::Result<Vec<T>> {
+        let sections: Sections = serde_json::from_str(&self.get_json("/library/sections").await?)?;
+        let mut out = Vec::new();
+        for dir in sections.media_container.directory {
+            if dir.kind == "movie" || dir.kind == "show" {
+                let body = self
+                    .get_json(&format!("/library/sections/{}/all", dir.key))
+                    .await?;
+                out.extend(parse(&body)?);
+            }
+        }
+        Ok(out)
+    }
 }
 
 #[derive(Deserialize)]
@@ -203,17 +223,7 @@ impl CatalogueSource for PlexClient {
     }
 
     async fn fetch(&self) -> anyhow::Result<Vec<FetchedTitle>> {
-        let sections: Sections = serde_json::from_str(&self.get_json("/library/sections").await?)?;
-        let mut out = Vec::new();
-        for dir in sections.media_container.directory {
-            if dir.kind == "movie" || dir.kind == "show" {
-                let body = self
-                    .get_json(&format!("/library/sections/{}/all", dir.key))
-                    .await?;
-                out.extend(parse_section(&body)?);
-            }
-        }
-        Ok(out)
+        self.for_each_section(parse_section).await
     }
 
     fn watch_history_source(&self) -> Option<&'static str> {
@@ -221,17 +231,7 @@ impl CatalogueSource for PlexClient {
     }
 
     async fn fetch_watch_history(&self) -> anyhow::Result<Vec<WatchRecord>> {
-        let sections: Sections = serde_json::from_str(&self.get_json("/library/sections").await?)?;
-        let mut out = Vec::new();
-        for dir in sections.media_container.directory {
-            if dir.kind == "movie" || dir.kind == "show" {
-                let body = self
-                    .get_json(&format!("/library/sections/{}/all", dir.key))
-                    .await?;
-                out.extend(parse_watch_history(&body)?);
-            }
-        }
-        Ok(out)
+        self.for_each_section(parse_watch_history).await
     }
 }
 

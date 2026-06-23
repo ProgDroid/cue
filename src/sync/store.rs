@@ -9,12 +9,21 @@ use crate::sync::merge::MergedTitle;
 use crate::sync::ImageRef;
 
 /// Find an existing surrogate id by identity (imdb → tmdb → `plex_guid`).
-async fn find_existing(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<Option<i64>> {
+///
+/// Takes the open transaction connection (not the pool) so the lookup and the
+/// subsequent insert/update are one atomic read-modify-write — closing the
+/// window where a concurrent writer could insert the same identity between a
+/// pooled read and the insert (a duplicate `tmdb_id`/`plex_guid` row, since
+/// those are not UNIQUE).
+async fn find_existing(
+    conn: &mut SqliteConnection,
+    t: &MergedTitle,
+) -> anyhow::Result<Option<i64>> {
     if let Some(imdb) = &t.imdb_id {
         if let Some(id) =
             sqlx::query_scalar::<_, i64>("SELECT id FROM titles WHERE imdb_id = ? LIMIT 1")
                 .bind(imdb)
-                .fetch_optional(pool)
+                .fetch_optional(&mut *conn)
                 .await?
         {
             return Ok(Some(id));
@@ -24,7 +33,7 @@ async fn find_existing(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<Opt
         if let Some(id) =
             sqlx::query_scalar::<_, i64>("SELECT id FROM titles WHERE tmdb_id = ? LIMIT 1")
                 .bind(tmdb)
-                .fetch_optional(pool)
+                .fetch_optional(&mut *conn)
                 .await?
         {
             return Ok(Some(id));
@@ -34,7 +43,7 @@ async fn find_existing(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<Opt
         if let Some(id) =
             sqlx::query_scalar::<_, i64>("SELECT id FROM titles WHERE plex_guid = ? LIMIT 1")
                 .bind(guid)
-                .fetch_optional(pool)
+                .fetch_optional(&mut *conn)
                 .await?
         {
             return Ok(Some(id));
@@ -92,13 +101,12 @@ const fn split_ref(r: Option<&ImageRef>) -> (Option<&str>, Option<&str>) {
 /// # Errors
 /// Returns an error if any query fails.
 pub async fn upsert_title(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<i64> {
-    // Identity lookup runs outside the tx — read-only, no consistency risk.
-    let existing = find_existing(pool, t).await?;
-
     let (poster_url, poster_plex) = split_ref(t.poster.as_ref());
     let (backdrop_url, backdrop_plex) = split_ref(t.backdrop.as_ref());
 
     let mut tx = pool.begin().await?;
+    // Identity lookup runs inside the tx so find→insert is atomic.
+    let existing = find_existing(&mut tx, t).await?;
     let id = if let Some(id) = existing {
         sqlx::query(
             "UPDATE titles SET imdb_id = ?, tmdb_id = ?, plex_guid = ?, title = ?, year = ?,
@@ -190,10 +198,16 @@ pub async fn reconcile_service(
     Ok(())
 }
 
-/// Delete titles with no service membership. Returns rows removed.
+/// Delete titles with no service membership at all. Returns rows removed.
+///
+/// Test-only: production uses [`prune_orphans_scoped`], which preserves titles
+/// owned solely by protected (failed) services. Gated to `#[cfg(test)]` so there
+/// is a single safe prune entry point in the binary and this unscoped variant
+/// can't be wired up by mistake.
 ///
 /// # Errors
 /// Returns an error if the query fails.
+#[cfg(test)]
 pub async fn prune_orphans(pool: &SqlitePool) -> anyhow::Result<u64> {
     let res =
         sqlx::query("DELETE FROM titles WHERE id NOT IN (SELECT title_id FROM title_services)")

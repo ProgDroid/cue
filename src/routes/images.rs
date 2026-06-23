@@ -19,10 +19,12 @@ enum Kind {
 }
 
 impl Kind {
-    const fn columns(self) -> (&'static str, &'static str) {
+    /// The two-column `SELECT` for this art kind. Two fully-static strings (not a
+    /// `format!`) so there is no string-built SQL to second-guess.
+    const fn select_sql(self) -> &'static str {
         match self {
-            Self::Poster => ("poster_url", "poster_plex"),
-            Self::Backdrop => ("backdrop_url", "backdrop_plex"),
+            Self::Poster => "SELECT poster_url, poster_plex FROM titles WHERE id = ?",
+            Self::Backdrop => "SELECT backdrop_url, backdrop_plex FROM titles WHERE id = ?",
         }
     }
 }
@@ -66,9 +68,7 @@ fn is_safe_plex_path(path: &str) -> bool {
 }
 
 async fn serve(id: i64, kind: Kind, pool: &SqlitePool, art: &PlexArt) -> HttpResponse {
-    let (url_col, plex_col) = kind.columns();
-    let sql = format!("SELECT {url_col}, {plex_col} FROM titles WHERE id = ?");
-    let row = sqlx::query_as::<_, (Option<String>, Option<String>)>(&sql)
+    let row = sqlx::query_as::<_, (Option<String>, Option<String>)>(kind.select_sql())
         .bind(id)
         .fetch_optional(pool)
         .await;
