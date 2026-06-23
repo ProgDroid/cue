@@ -1,5 +1,6 @@
 pub mod ask;
 pub mod catalogue;
+pub mod images;
 pub mod sync;
 pub mod user_data;
 
@@ -27,6 +28,8 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route(
                 "/titles/{id}/watched",
                 web::put().to(user_data::set_watched),
-            ),
+            )
+            .route("/titles/{id}/poster", web::get().to(images::poster))
+            .route("/titles/{id}/backdrop", web::get().to(images::backdrop)),
     );
 }
