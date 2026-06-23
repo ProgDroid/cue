@@ -15,17 +15,14 @@ const store = useCatalogueStore()
 const id = computed(() => Number(route.params.id))
 const detail = ref<TitleDetail | null>(null)
 const loading = ref(true)
-const notFound = ref(false)
 
 async function loadDetail(tid: number) {
   loading.value = true
-  notFound.value = false
   detail.value = null
   try {
     detail.value = await getTitle(tid)
   } catch {
-    // any fetch failure (404 or otherwise) shows the not-found panel
-    notFound.value = true
+    // any failure leaves detail null -> the v-else not-found panel renders
   } finally {
     loading.value = false
   }

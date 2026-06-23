@@ -59,4 +59,11 @@ describe('api client', () => {
     vi.stubGlobal('fetch', mockFetch(500, null))
     await expect(getCatalogue()).rejects.toThrow(/HTTP 500/)
   })
+
+  it('getTitle throws a generic Error on HTTP 500 (not NotFoundError)', async () => {
+    vi.stubGlobal('fetch', mockFetch(500, null))
+    await expect(getTitle(1)).rejects.toThrow(/HTTP 500/)
+    vi.stubGlobal('fetch', mockFetch(500, null))
+    await expect(getTitle(1)).rejects.not.toBeInstanceOf(NotFoundError)
+  })
 })

@@ -44,4 +44,22 @@ describe('DetailView', () => {
     const w = await mountAt(999)
     expect(w.text()).toContain('Title not found')
   })
+
+  it('re-fetches when the route id changes', async () => {
+    const detail6: TitleDetail = { ...listItem, id: 6, title: 'Up', desc: 'A balloon.', cast: ['Ed Asner'] }
+    vi.spyOn(client, 'getTitle').mockImplementation((id) =>
+      id === 6 ? Promise.resolve(detail6) : Promise.resolve(detail),
+    )
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/', component: { template: '<div>home</div>' } },
+      { path: '/title/:id', component: DetailView },
+    ] })
+    const s = useCatalogueStore(); s.catalogue = [listItem]
+    router.push('/title/5'); await router.isReady()
+    mount(DetailView, { global: { plugins: [router] } })
+    await flushPromises()
+    router.push('/title/6')
+    await flushPromises()
+    expect(client.getTitle).toHaveBeenCalledWith(6)
+  })
 })

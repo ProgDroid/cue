@@ -4,9 +4,11 @@ import { computeWindow } from './computeWindow'
 // Persists across remounts (back-nav from DetailView) so spacer height is
 // correct on the first frame and the browser can restore scroll position.
 let cachedRowHeight = 0
+let cachedContainerWidth = 0
 
 export interface UseVirtualGridOptions {
   containerEl: Ref<HTMLElement | null>
+  /** Must be a writable ref; the composable seeds it from cache on mount. */
   rowHeight: Ref<number>
   itemCount: Ref<number>
   overscanRows?: number
@@ -40,6 +42,9 @@ export function useVirtualGrid(opts: UseVirtualGridOptions): UseVirtualGrid {
     if (opts.rowHeight.value === 0 && cachedRowHeight > 0) {
       opts.rowHeight.value = cachedRowHeight
     }
+    if (containerWidth.value === 0 && cachedContainerWidth > 0) {
+      containerWidth.value = cachedContainerWidth
+    }
     readScroll()
     const el = opts.containerEl.value
     if (el) {
@@ -61,6 +66,7 @@ export function useVirtualGrid(opts: UseVirtualGridOptions): UseVirtualGrid {
   })
 
   watch(opts.rowHeight, (h) => { if (h > 0) cachedRowHeight = h })
+  watch(containerWidth, (w) => { if (w > 0) cachedContainerWidth = w })
 
   const win = computed(() => computeWindow({
     containerWidth: containerWidth.value,
