@@ -26,7 +26,9 @@ add a dedicated IMDb feed (e.g. OMDb) — decided out of scope. Instead:
 ## 2. Goals / non-goals
 
 **Goals**
-- Rename the conflated `imdb_rating` to `rating` end-to-end (DB column, Rust structs, DTO field, UI).
+- Rename the conflated `imdb_rating` to `score` end-to-end (DB column, Rust structs, DTO field, UI).
+  (`rating` is unavailable — `TitleDto`/`Title` already use `rating` for the user's personal 1–10
+  score; the aggregate becomes `score` to avoid that collision.)
 - Drop IMDb-specific branding from the generic pill.
 - Enrich anime titles with AniList `averageScore` via an **exact, offline id-mapping** join.
 - Grid: show AniList score (fallback to the generic rating when unmatched). Detail: show **both**.
@@ -51,20 +53,26 @@ Migration `migrations/0008_*.sql` (forward-only, newline-terminated; remember
 `cargo clean -p cue` before tests — `sqlx::migrate!` won't pick up a new `.sql` on an incremental build):
 
 ```sql
-ALTER TABLE titles RENAME COLUMN imdb_rating TO rating;
-ALTER TABLE titles ADD COLUMN anilist_id   INTEGER;
-ALTER TABLE titles ADD COLUMN anilist_score REAL;   -- normalized 0–10, like `rating`
+ALTER TABLE titles RENAME COLUMN imdb_rating TO score;
+ALTER TABLE titles ADD COLUMN anilist_id    INTEGER;
+ALTER TABLE titles ADD COLUMN anilist_score REAL;   -- normalized 0–10, like `score`
 ```
 
 (SQLite ≥ 3.25 supports `RENAME COLUMN`; the bundled SQLx driver is current.)
 
-**Rust rename (mechanical, all `imdb_rating` → `rating`):** `FetchedTitle`, `MergedTitle`,
-`SeedTitle`, the `motn.rs`/`plex.rs`/`seed.rs` constructors, `db/catalogue.rs` queries, and the
-DTOs in `models.rs`. **DTO field rename `imdb` → `rating`** (the JSON key the frontend reads), plus a
-new `anilistScore` field on both list-item and detail DTOs.
+**Naming note — collision avoided:** the aggregate cannot be called `rating` because `TitleDto` /
+`TitleListItem` (and the `Title` TS type) already use `rating` for the user's personal 1–10 score
+(from `user_ratings`, written via `PUT/DELETE /api/titles/:id/rating`). The aggregate is therefore
+named **`score`**; the personal `rating` field is left untouched.
+
+**Rust rename (mechanical, all `imdb_rating` → `score`):** `FetchedTitle`, `MergedTitle`, `TitleRow`,
+`TitleListRow`, the `motn.rs`/`plex.rs`/`seed.rs` constructors + queries, `db/catalogue.rs` queries.
+The `SeedTitle` struct keeps reading the seed JSON key `imdb` (no seed-data edit) but binds to the
+`score` column. **DTO field rename `imdb` → `score`** (the JSON key the frontend reads), plus a new
+`anilistScore` field on both list-item and detail DTOs.
 
 `anilist_score` is stored normalized to 0–10 (`averageScore / 10.0`) so it renders identically to
-`rating`.
+`score`.
 
 ## 5. AniList enrichment pipeline
 
@@ -111,7 +119,7 @@ Mirrors the load-bearing watch-history sync guard (a flaky external source must 
   - `anilistScore != null` → **AniList pill** (AniList blue `#02A9FF`).
   - else `rating != null` → **generic "Rating" pill** (neutral star; IMDb gold `#f5c518`/branding removed).
 - **`DetailView`:** render **both** the AniList pill and the generic Rating pill when each is present.
-- Update `isTitle`/type guards and any `title.imdb` reads to `title.rating`; add `anilistScore`.
+- Update `isTitle`/type guards and `types.ts`; rename `title.imdb` → `title.score`; add `anilistScore`.
 - A11y: pill `aria-label`s name their source ("AniList score 8.6", "Rating 7.4").
 
 ## 7. Testing (TDD, per repo convention)
