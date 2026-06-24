@@ -138,10 +138,10 @@ pub async fn run_sync(
     unique_ok.sort_by_key(|s| s.as_str());
     unique_ok.dedup();
     for svc in &unique_ok {
-        let desired: Vec<i64> = id_services
+        let desired: Vec<(i64, Option<String>)> = id_services
             .iter()
             .filter(|(_, services)| services.contains(svc))
-            .map(|(id, _)| *id)
+            .map(|(id, _)| (*id, None))
             .collect();
         let count = i64::try_from(desired.len()).unwrap_or(i64::MAX);
         store::reconcile_service(pool, *svc, &desired).await?;
