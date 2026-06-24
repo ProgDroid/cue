@@ -11,8 +11,7 @@ use crate::models::{Service, TitleDto, TitleKind, TitleListItem, TitleListRow, T
 /// Returns an error if any database query fails.
 pub async fn fetch_catalogue(pool: &SqlitePool) -> anyhow::Result<Vec<TitleListItem>> {
     let rows: Vec<TitleListRow> = sqlx::query_as(
-        "SELECT id, imdb_id, title, year, type, imdb_rating, length
-         FROM titles ORDER BY id",
+        "SELECT id, imdb_id, title, year, type, score, anilist_score, length\n         FROM titles ORDER BY id",
     )
     .fetch_all(pool)
     .await?;
@@ -62,7 +61,8 @@ pub async fn fetch_catalogue(pool: &SqlitePool) -> anyhow::Result<Vec<TitleListI
             services: svc_map.remove(&r.id).unwrap_or_default(),
             kind,
             genres: genre_map.remove(&r.id).unwrap_or_default(),
-            imdb: r.imdb_rating,
+            score: r.score,
+            anilist_score: r.anilist_score,
             len: r.length,
             watched,
             rating,
@@ -77,8 +77,7 @@ pub async fn fetch_catalogue(pool: &SqlitePool) -> anyhow::Result<Vec<TitleListI
 /// Returns an error if any database query fails.
 pub async fn fetch_title(pool: &SqlitePool, id: i64) -> anyhow::Result<Option<TitleDto>> {
     let Some(r) = sqlx::query_as::<_, TitleRow>(
-        "SELECT id, imdb_id, title, year, type, imdb_rating, length, description
-         FROM titles WHERE id = ?",
+        "SELECT id, imdb_id, title, year, type, score, anilist_score, length, description\n         FROM titles WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -136,7 +135,8 @@ pub async fn fetch_title(pool: &SqlitePool, id: i64) -> anyhow::Result<Option<Ti
         services,
         kind,
         genres,
-        imdb: r.imdb_rating,
+        score: r.score,
+        anilist_score: r.anilist_score,
         len: r.length,
         desc: r.description,
         cast,

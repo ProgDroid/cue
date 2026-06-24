@@ -9,7 +9,8 @@ export interface TitleListItem {
   services: ServiceKey[]
   type: TitleKind
   genres: string[]
-  imdb: number | null
+  score: number | null
+  anilistScore: number | null
   len: string
   watched: boolean
   rating: number | null

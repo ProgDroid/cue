@@ -7,7 +7,7 @@ import type { Title } from '@/types'
 function t(id: number): Title {
   return {
     id, imdbId: null, title: `T${id}`, year: 2000, services: ['plex'],
-    type: 'movie', genres: [], imdb: null, len: '90 min', watched: false, rating: null,
+    type: 'movie', genres: [], score: null, anilistScore: null, len: '90 min', watched: false, rating: null,
   }
 }
 

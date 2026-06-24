@@ -86,7 +86,7 @@ async fn main() -> std::io::Result<()> {
             pool.clone(),
         )));
     }
-    let runner = cue::sync::SyncRunner::new(pool.clone(), sources, embedder);
+    let runner = cue::sync::SyncRunner::new(pool.clone(), sources, embedder, Some(cfg.data_dir()));
 
     // Sync once on startup until a real sync has ever succeeded (fresh DB or
     // seed-only catalogue). Keys off sync history, not a hard-coded seed size.

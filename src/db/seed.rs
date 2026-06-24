@@ -34,7 +34,7 @@ pub async fn seed_if_empty(pool: &SqlitePool) -> anyhow::Result<usize> {
     let mut tx = pool.begin().await?;
     for s in &seeds {
         let id: i64 = sqlx::query_scalar(
-            "INSERT INTO titles (imdb_id, title, year, type, imdb_rating, length, description)
+            "INSERT INTO titles (imdb_id, title, year, type, score, length, description)
              VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
         )
         .bind(&s.imdb_id)

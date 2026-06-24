@@ -11,6 +11,7 @@ use crate::db::sync_runs;
 use crate::models::{Service, TitleKind};
 use crate::services::embeddings::{backfill, Embedder};
 
+pub mod anilist;
 pub mod merge;
 pub mod motn;
 pub mod plex;
@@ -45,7 +46,7 @@ pub struct FetchedTitle {
     pub title: String,
     pub year: Option<i64>,
     pub kind: TitleKind,
-    pub imdb_rating: Option<f64>,
+    pub score: Option<f64>,
     pub length: Option<String>,
     pub description: Option<String>,
     pub genres: Vec<String>,
@@ -207,6 +208,7 @@ pub struct SyncRunner {
     pool: SqlitePool,
     sources: Vec<Arc<dyn CatalogueSource>>,
     embedder: Option<Arc<dyn Embedder>>,
+    anilist_dir: Option<std::path::PathBuf>,
     running: AtomicBool,
 }
 
@@ -216,11 +218,13 @@ impl SyncRunner {
         pool: SqlitePool,
         sources: Vec<Arc<dyn CatalogueSource>>,
         embedder: Option<Arc<dyn Embedder>>,
+        anilist_dir: Option<std::path::PathBuf>,
     ) -> Arc<Self> {
         Arc::new(Self {
             pool,
             sources,
             embedder,
+            anilist_dir,
             running: AtomicBool::new(false),
         })
     }
@@ -245,6 +249,11 @@ impl SyncRunner {
             if let Err(e) = run_sync(&me.pool, &me.sources, embedder).await {
                 tracing::error!("sync run failed: {e:#}");
             }
+            if let Some(dir) = me.anilist_dir.clone() {
+                if let Err(e) = anilist::enrich(&me.pool, &dir).await {
+                    tracing::error!("anilist enrich failed: {e:#}");
+                }
+            }
             me.running.store(false, Ordering::Release);
         });
         true
@@ -264,7 +273,7 @@ mod tests {
             title: "X".into(),
             year: Some(2020),
             kind: TitleKind::Movie,
-            imdb_rating: None,
+            score: None,
             length: None,
             description: None,
             genres: vec![],
@@ -314,7 +323,7 @@ mod orchestrator_tests {
             title: imdb.into(),
             year: Some(2020),
             kind: TitleKind::Movie,
-            imdb_rating: None,
+            score: None,
             length: None,
             description: None,
             genres: vec!["action".into()],
@@ -550,7 +559,7 @@ mod orchestrator_tests {
         let (p, _dir) = pool().await;
         let gate = Arc::new(AtomicBool::new(false));
         let src = Arc::new(BlockingSource { gate: gate.clone() }) as Arc<dyn CatalogueSource>;
-        let runner = SyncRunner::new(p, vec![src], None);
+        let runner = SyncRunner::new(p, vec![src], None, None);
 
         // First start is accepted; its fetch() now blocks on the gate.
         assert!(runner.try_start(), "first start accepted");

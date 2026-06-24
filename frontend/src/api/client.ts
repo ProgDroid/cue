@@ -11,10 +11,11 @@ function isTitle(v: unknown): v is Title {
     && Array.isArray(r.genres)
     && typeof r.len === 'string'
     && typeof r.watched === 'boolean'
-    // imdbId drives canRate in DetailView; imdb/rating render. Validate all three
+    // imdbId drives canRate in DetailView; score/anilistScore/rating render. Validate all
     // (each nullable) so a bad value can't silently disable rating or mis-render.
     && (r.imdbId === null || typeof r.imdbId === 'string')
-    && (r.imdb === null || typeof r.imdb === 'number')
+    && (r.score === null || typeof r.score === 'number')
+    && (r.anilistScore === null || typeof r.anilistScore === 'number')
     && (r.rating === null || typeof r.rating === 'number')
 }
 

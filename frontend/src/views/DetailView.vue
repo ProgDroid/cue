@@ -148,7 +148,7 @@ const simFailed = ref<Record<number, boolean>>({})
 
       <!-- Right: info column -->
       <div class="info-col">
-        <!-- Badge row: service pills + IMDb pill -->
+        <!-- Badge row: service pills + rating pills -->
         <div class="badge-row">
           <ServicePill
             v-for="svc in detail.services"
@@ -156,10 +156,15 @@ const simFailed = ref<Record<number, boolean>>({})
             :service="svc"
             class="svc-pill-wrap"
           />
-          <span v-if="detail.imdb !== null" class="imdb-pill">
-            <span class="imdb-star">★</span>
-            <span class="imdb-score">{{ detail.imdb }}</span>
-            <span class="imdb-label">IMDb</span>
+          <span v-if="detail.anilistScore !== null" data-test="detail-anilist" class="rating-pill anilist-pill">
+            <span class="pill-mark">AL</span>
+            <span class="pill-score">{{ detail.anilistScore }}</span>
+            <span class="pill-label">AniList</span>
+          </span>
+          <span v-if="detail.score !== null" data-test="detail-score" class="rating-pill">
+            <span class="pill-mark">★</span>
+            <span class="pill-score">{{ detail.score }}</span>
+            <span class="pill-label">Rating</span>
           </span>
         </div>
 
@@ -456,7 +461,7 @@ const simFailed = ref<Record<number, boolean>>({})
   border-radius: 999px;
 }
 
-.imdb-pill {
+.rating-pill {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -466,23 +471,27 @@ const simFailed = ref<Record<number, boolean>>({})
   border-radius: 999px;
 }
 
-.imdb-star {
+.pill-mark {
   color: var(--accent, #f5c518);
   font-size: 11px;
 }
 
-.imdb-score {
+.pill-score {
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
   font-size: 11px;
   font-weight: 600;
   color: var(--accent-text, #f5d24e);
 }
 
-.imdb-label {
+.pill-label {
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
   font-size: 10px;
   color: var(--accent-dim, #8a7a30);
 }
+
+.anilist-pill { background: rgba(2, 169, 255, 0.1); border-color: rgba(2, 169, 255, 0.25); }
+.anilist-pill .pill-mark { color: #02a9ff; font-weight: 700; font-size: 10px; }
+.anilist-pill .pill-label { color: #2b7fb0; }
 
 /* Title + fact line */
 .title-h1 {

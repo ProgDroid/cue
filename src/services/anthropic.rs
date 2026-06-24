@@ -14,7 +14,7 @@ pub struct Candidate {
     pub year: i64,
     pub kind: String,
     pub genres: Vec<String>,
-    pub imdb: Option<f64>,
+    pub score: Option<f64>,
 }
 
 /// The validated ask result. Field names match the frontend `AskResult`.
@@ -71,15 +71,15 @@ fn candidate_lines(candidates: &[Candidate]) -> String {
     candidates
         .iter()
         .map(|c| {
-            let imdb = c.imdb.map_or_else(|| "n/a".to_string(), |r| r.to_string());
+            let score = c.score.map_or_else(|| "n/a".to_string(), |r| r.to_string());
             format!(
-                "id={} | {} ({}) | {} | {} | imdb {}",
+                "id={} | {} ({}) | {} | {} | score {}",
                 c.id,
                 c.title,
                 c.year,
                 c.kind,
                 c.genres.join("/"),
-                imdb
+                score
             )
         })
         .collect::<Vec<_>>()

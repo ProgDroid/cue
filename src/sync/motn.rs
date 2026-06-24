@@ -199,7 +199,7 @@ fn show_to_fetched(s: Show, country: &str, services: &[Service]) -> FetchedTitle
         title: s.title,
         year,
         kind,
-        imdb_rating: s.rating.map(|r| r / 10.0),
+        score: s.rating.map(|r| r / 10.0),
         length,
         description: s.overview,
         genres: s.genres.into_iter().map(|g| g.name).collect(),
@@ -554,10 +554,7 @@ mod tests {
         assert_eq!(t.kind, TitleKind::Movie);
         assert_eq!(t.year, Some(2017));
         assert_eq!(t.length.as_deref(), Some("105 min"));
-        assert!(
-            (t.imdb_rating.unwrap() - 8.2).abs() < 1e-9,
-            "rating 82 -> 8.2"
-        );
+        assert!((t.score.unwrap() - 8.2).abs() < 1e-9, "rating 82 -> 8.2");
         assert_eq!(t.services, vec![Service::Disney]);
     }
 
@@ -711,7 +708,7 @@ mod tests {
             title: title.to_string(),
             year: None,
             kind: "movie".into(),
-            imdb_rating: None,
+            score: None,
             length: None,
             description: None,
             genres: vec![],

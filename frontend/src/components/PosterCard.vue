@@ -60,14 +60,24 @@ const posterSrc = computed(() => `/api/titles/${props.title.id}/poster`)
         />
       </div>
 
-      <!-- IMDB rating badge (top-right) -->
+      <!-- Rating badge (top-right): AniList preferred, else generic score -->
       <div
-        v-if="title.imdb !== null"
-        class="poster-imdb-badge"
-        :aria-label="`IMDb rating ${title.imdb}`"
+        v-if="title.anilistScore !== null"
+        data-test="anilist-badge"
+        class="poster-badge anilist"
+        :aria-label="`AniList score ${title.anilistScore}`"
       >
-        <span class="imdb-star" aria-hidden="true">★</span>
-        <span class="imdb-score">{{ title.imdb }}</span>
+        <span class="badge-mark anilist-mark" aria-hidden="true">AL</span>
+        <span class="badge-score">{{ title.anilistScore }}</span>
+      </div>
+      <div
+        v-else-if="title.score !== null"
+        data-test="score-badge"
+        class="poster-badge"
+        :aria-label="`Rating ${title.score}`"
+      >
+        <span class="badge-mark" aria-hidden="true">★</span>
+        <span class="badge-score">{{ title.score }}</span>
       </div>
 
       <!-- Watched badge (bottom-right) -->
@@ -184,7 +194,7 @@ const posterSrc = computed(() => `/api/titles/${props.title.id}/poster`)
   border-radius: 50%;
 }
 
-.poster-imdb-badge {
+.poster-badge {
   position: absolute;
   top: 9px;
   right: 9px;
@@ -197,16 +207,24 @@ const posterSrc = computed(() => `/api/titles/${props.title.id}/poster`)
   border-radius: var(--r-sm, 6px);
 }
 
-.imdb-star {
+.badge-mark {
   color: var(--accent, #f5c518);
   font-size: 10px;
 }
 
-.imdb-score {
+.badge-score {
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
   font-size: 11px;
   font-weight: 600;
   color: var(--accent-text, #f5d24e);
+}
+
+.anilist { background: rgba(2, 169, 255, 0.16); }
+.anilist-mark {
+  color: #02a9ff;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .watched-badge {

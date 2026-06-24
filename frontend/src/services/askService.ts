@@ -35,7 +35,7 @@ export class StubAskService implements AskService {
       const ids = [...current].sort((a, b) => lenMinutes(a.len) - lenMinutes(b.len)).map(t => t.id)
       return { line: 'Shortest first.', sub: `${ids.length} · refine or filter to narrow`, ids }
     }
-    const pool = current.filter(t => (t.imdb ?? 0) >= 8)
+    const pool = current.filter(t => (t.score ?? 0) >= 8)
     const pick = pool.length ? [pool[0].id] : current.slice(0, 1).map(t => t.id) // deterministic for tests
     return { line: 'A surprise for you.', sub: `${pick.length} · refine or filter to narrow`, ids: pick }
   }
@@ -45,8 +45,8 @@ export class StubAskService implements AskService {
     const g = new Set(title.genres)
     const ids = all
       .filter(t => t.id !== title.id && t.genres.some(x => g.has(x)))
-      .map(t => ({ id: t.id, shared: t.genres.filter(x => g.has(x)).length, imdb: t.imdb ?? -Infinity }))
-      .sort((a, b) => b.shared - a.shared || b.imdb - a.imdb)
+      .map(t => ({ id: t.id, shared: t.genres.filter(x => g.has(x)).length, score: t.score ?? -Infinity }))
+      .sort((a, b) => b.shared - a.shared || b.score - a.score)
       .map(x => x.id)
     return { line: `More like ${title.title}.`, sub: `${ids.length} · refine or filter to narrow`, ids }
   }

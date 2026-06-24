@@ -1,0 +1,26 @@
+[
+  {
+    "type": "TV",
+    "anilist_id": 290,
+    "imdb_id": ["tt0286390"],
+    "themoviedb_id": { "tv": 26209 }
+  },
+  {
+    "type": "MOVIE",
+    "anilist_id": 164,
+    "imdb_id": ["tt0119698"],
+    "themoviedb_id": { "movie": [128] }
+  },
+  {
+    "type": "OVA",
+    "anilist_id": 1596,
+    "imdb_id": null,
+    "themoviedb_id": { "tv": 29241 }
+  },
+  {
+    "type": "OVA",
+    "anilist_id": 300,
+    "imdb_id": ["tt0102847"],
+    "themoviedb_id": { "tv": 62913 }
+  }
+]

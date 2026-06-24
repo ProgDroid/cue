@@ -64,7 +64,8 @@ pub struct TitleRow {
     pub year: i64,
     #[sqlx(rename = "type")]
     pub kind: String,
-    pub imdb_rating: Option<f64>,
+    pub score: Option<f64>,
+    pub anilist_score: Option<f64>,
     pub length: String,
     pub description: String,
 }
@@ -78,7 +79,8 @@ pub struct TitleListRow {
     pub year: i64,
     #[sqlx(rename = "type")]
     pub kind: String,
-    pub imdb_rating: Option<f64>,
+    pub score: Option<f64>,
+    pub anilist_score: Option<f64>,
     pub length: String,
 }
 
@@ -93,7 +95,9 @@ pub struct TitleDto {
     #[serde(rename = "type")]
     pub kind: TitleKind,
     pub genres: Vec<String>,
-    pub imdb: Option<f64>,
+    pub score: Option<f64>,
+    #[serde(rename = "anilistScore")]
+    pub anilist_score: Option<f64>,
     pub len: String,
     pub desc: String,
     pub cast: Vec<String>,
@@ -113,7 +117,9 @@ pub struct TitleListItem {
     #[serde(rename = "type")]
     pub kind: TitleKind,
     pub genres: Vec<String>,
-    pub imdb: Option<f64>,
+    pub score: Option<f64>,
+    #[serde(rename = "anilistScore")]
+    pub anilist_score: Option<f64>,
     pub len: String,
     pub watched: bool,
     pub rating: Option<i64>,
@@ -133,7 +139,8 @@ mod tests {
             services: vec![Service::Plex],
             kind: TitleKind::Movie,
             genres: vec!["Sci-Fi".to_string(), "Drama".to_string()],
-            imdb: Some(8.0),
+            score: Some(8.0),
+            anilist_score: None,
             len: "164 min".to_string(),
             desc: "A replicant blade runner...".to_string(),
             cast: vec!["Ryan Gosling".to_string()],
@@ -144,7 +151,8 @@ mod tests {
         assert_eq!(v["type"], "movie");
         assert_eq!(v["imdbId"], "tt0096895");
         assert_eq!(v["services"], serde_json::json!(["plex"]));
-        assert_eq!(v["imdb"], 8.0);
+        assert_eq!(v["score"], 8.0);
+        assert_eq!(v["anilistScore"], serde_json::Value::Null);
         assert_eq!(v["rating"], serde_json::Value::Null);
     }
 
