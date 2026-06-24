@@ -18,6 +18,8 @@ struct MediaContainer {
 }
 #[derive(Deserialize)]
 struct Meta {
+    #[serde(rename = "ratingKey")]
+    rating_key: Option<String>,
     #[serde(rename = "type")]
     kind: String,
     title: String,
@@ -115,6 +117,8 @@ pub fn parse_section(json: &str) -> anyhow::Result<Vec<FetchedTitle>> {
                 genres: m.genre.into_iter().map(|g| g.tag).collect(),
                 cast: m.role.into_iter().map(|r| r.tag).collect(),
                 services: vec![Service::Plex],
+                plex_rating_key: m.rating_key,
+                links: vec![],
                 poster: m.thumb.map(|value| ImageRef {
                     value,
                     remote: false,
@@ -159,6 +163,26 @@ pub fn parse_watch_history(json: &str) -> anyhow::Result<Vec<WatchRecord>> {
             })
         })
         .collect())
+}
+
+#[derive(Deserialize)]
+struct Identity {
+    #[serde(rename = "MediaContainer")]
+    media_container: IdentityBody,
+}
+#[derive(Deserialize)]
+struct IdentityBody {
+    #[serde(rename = "machineIdentifier")]
+    machine_identifier: Option<String>,
+}
+
+/// Extract the server `machineIdentifier` from a Plex `/identity` body.
+///
+/// # Errors
+/// Returns an error if the JSON does not match the expected shape.
+pub fn parse_machine_id(json: &str) -> anyhow::Result<Option<String>> {
+    let parsed: Identity = serde_json::from_str(json)?;
+    Ok(parsed.media_container.machine_identifier)
 }
 
 /// Live Plex client (raw HTTP — fetches sections then items).
@@ -247,6 +271,13 @@ impl CatalogueSource for PlexClient {
 
     async fn fetch_watch_history(&self) -> anyhow::Result<Vec<WatchRecord>> {
         self.for_each_section(parse_watch_history).await
+    }
+
+    async fn server_meta(&self) -> anyhow::Result<Vec<(String, String)>> {
+        let body = self.get_json("/identity").await?;
+        Ok(parse_machine_id(&body)?
+            .map(|id| vec![("plex_machine_id".to_string(), id)])
+            .unwrap_or_default())
     }
 }
 
@@ -371,6 +402,22 @@ mod tests {
         assert_eq!(out[0].kind, TitleKind::Movie);
         assert_eq!(out[1].title, "A Series");
         assert_eq!(out[1].kind, TitleKind::Series);
+    }
+
+    #[test]
+    fn parses_rating_key() {
+        let json = include_str!("../../tests/fixtures/plex_section_all.json");
+        let out = parse_section(json).unwrap();
+        assert_eq!(out[0].plex_rating_key.as_deref(), Some("49518"));
+    }
+
+    #[test]
+    fn parses_machine_identifier() {
+        let json = r#"{"MediaContainer":{"machineIdentifier":"abc123def","version":"1.40"}}"#;
+        assert_eq!(
+            parse_machine_id(json).unwrap().as_deref(),
+            Some("abc123def")
+        );
     }
 
     #[test]

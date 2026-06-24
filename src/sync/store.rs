@@ -110,7 +110,7 @@ pub async fn upsert_title(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<
     let id = if let Some(id) = existing {
         sqlx::query(
             "UPDATE titles SET imdb_id = ?, tmdb_id = ?, plex_guid = ?, title = ?, year = ?,
-             type = ?, score = ?, length = ?, description = ?,
+             type = ?, score = ?, length = ?, description = ?, plex_rating_key = ?,
              poster_url = ?, poster_plex = ?, backdrop_url = ?, backdrop_plex = ?,
              updated_at = datetime('now') WHERE id = ?",
         )
@@ -123,6 +123,7 @@ pub async fn upsert_title(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<
         .bind(t.score)
         .bind(&t.length)
         .bind(&t.description)
+        .bind(&t.plex_rating_key)
         .bind(poster_url)
         .bind(poster_plex)
         .bind(backdrop_url)
@@ -133,8 +134,8 @@ pub async fn upsert_title(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<
         id
     } else {
         sqlx::query_scalar::<_, i64>(
-            "INSERT INTO titles (imdb_id, tmdb_id, plex_guid, title, year, type, score, length, description, poster_url, poster_plex, backdrop_url, backdrop_plex)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+            "INSERT INTO titles (imdb_id, tmdb_id, plex_guid, title, year, type, score, length, description, plex_rating_key, poster_url, poster_plex, backdrop_url, backdrop_plex)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
         )
         .bind(&t.imdb_id)
         .bind(&t.tmdb_id)
@@ -145,6 +146,7 @@ pub async fn upsert_title(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<
         .bind(t.score)
         .bind(&t.length)
         .bind(&t.description)
+        .bind(&t.plex_rating_key)
         .bind(poster_url)
         .bind(poster_plex)
         .bind(backdrop_url)
@@ -157,19 +159,20 @@ pub async fn upsert_title(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<
     Ok(id)
 }
 
-/// Make `title_services` for `service` exactly match `desired_ids`.
+/// Make `title_services` for `service` exactly match `desired`.
 ///
-/// The delete-stale and insert-missing passes run inside a single transaction so
-/// the result is always exactly `desired_ids`, even if interrupted.
+/// Each entry carries a `(title_id, link)` pair. The delete-stale and upsert
+/// passes run inside a single transaction so the result is always exactly
+/// `desired`, even if interrupted.
 ///
 /// # Errors
 /// Returns an error if any query fails.
 pub async fn reconcile_service(
     pool: &SqlitePool,
     service: Service,
-    desired_ids: &[i64],
+    desired: &[(i64, Option<String>)],
 ) -> anyhow::Result<()> {
-    let want: HashSet<i64> = desired_ids.iter().copied().collect();
+    let want: HashSet<i64> = desired.iter().map(|(id, _)| *id).collect();
     // Read current membership outside the tx — consistent snapshot for the diff.
     let current: Vec<i64> =
         sqlx::query_scalar("SELECT title_id FROM title_services WHERE service = ?")
@@ -187,12 +190,17 @@ pub async fn reconcile_service(
                 .await?;
         }
     }
-    for id in desired_ids {
-        sqlx::query("INSERT OR IGNORE INTO title_services (title_id, service) VALUES (?, ?)")
-            .bind(id)
-            .bind(service.as_str())
-            .execute(&mut *tx)
-            .await?;
+    for (id, link) in desired {
+        // Upsert so an existing membership row also refreshes its link.
+        sqlx::query(
+            "INSERT INTO title_services (title_id, service, link) VALUES (?, ?, ?)
+             ON CONFLICT(title_id, service) DO UPDATE SET link = excluded.link",
+        )
+        .bind(id)
+        .bind(service.as_str())
+        .bind(link)
+        .execute(&mut *tx)
+        .await?;
     }
     tx.commit().await?;
     Ok(())
@@ -277,6 +285,8 @@ mod tests {
             genres: genres.iter().map(|s| (*s).to_string()).collect(),
             cast: vec!["Actor".into()],
             services: services.to_vec(),
+            plex_rating_key: None,
+            links: vec![],
             poster: None,
             backdrop: None,
         }
@@ -320,9 +330,13 @@ mod tests {
         let b = upsert_title(&p, &merged("tt2", "B", &[], &[Service::Plex]))
             .await
             .unwrap();
-        reconcile_service(&p, Service::Plex, &[a, b]).await.unwrap();
+        reconcile_service(&p, Service::Plex, &[(a, None), (b, None)])
+            .await
+            .unwrap();
         // Second sync: only `a` is still on Plex.
-        reconcile_service(&p, Service::Plex, &[a]).await.unwrap();
+        reconcile_service(&p, Service::Plex, &[(a, None)])
+            .await
+            .unwrap();
         let removed = prune_orphans(&p).await.unwrap();
         assert_eq!(removed, 1);
         let remaining: Vec<i64> = sqlx::query_scalar("SELECT id FROM titles ORDER BY id")
@@ -341,10 +355,12 @@ mod tests {
         let pl = upsert_title(&p, &merged("ttP", "P", &[], &[Service::Plex]))
             .await
             .unwrap();
-        reconcile_service(&p, Service::Crunchyroll, &[c])
+        reconcile_service(&p, Service::Crunchyroll, &[(c, None)])
             .await
             .unwrap();
-        reconcile_service(&p, Service::Plex, &[pl]).await.unwrap();
+        reconcile_service(&p, Service::Plex, &[(pl, None)])
+            .await
+            .unwrap();
         // Both services touched -> both titles have a touched membership -> kept.
         let kept =
             prune_orphans_scoped(&p, &[Service::Plex.as_str(), Service::Crunchyroll.as_str()])
@@ -369,7 +385,9 @@ mod tests {
         let pl = upsert_title(&p, &merged("ttP", "P", &[], &[Service::Plex]))
             .await
             .unwrap();
-        reconcile_service(&p, Service::Plex, &[pl]).await.unwrap();
+        reconcile_service(&p, Service::Plex, &[(pl, None)])
+            .await
+            .unwrap();
         let removed = prune_orphans_scoped(&p, &[]).await.unwrap();
         assert_eq!(removed, 0, "no touched services -> prune nothing");
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM titles")
@@ -385,7 +403,7 @@ mod tests {
         let x = upsert_title(&p, &merged("tt3", "X", &[], &[Service::Crunchyroll]))
             .await
             .unwrap();
-        reconcile_service(&p, Service::Crunchyroll, &[x])
+        reconcile_service(&p, Service::Crunchyroll, &[(x, None)])
             .await
             .unwrap();
         // A Plex-only sync runs and reconciles Plex to empty; Crunchyroll untouched.
@@ -485,11 +503,51 @@ mod tests {
             genres: vec![],
             cast: vec![],
             services: vec![],
+            plex_rating_key: None,
+            links: vec![],
             poster: None,
             backdrop: None,
         };
         // Must NOT error despite two rows sharing tmdb_id "555".
         let id = upsert_title(&p, &m).await.unwrap();
         assert!(id > 0);
+    }
+
+    #[tokio::test]
+    async fn reconcile_service_persists_link() {
+        let (p, _dir) = pool().await;
+        let id = upsert_title(&p, &merged("tt1", "T", &[], &[Service::Crunchyroll]))
+            .await
+            .unwrap();
+        reconcile_service(
+            &p,
+            Service::Crunchyroll,
+            &[(id, Some("https://crunchyroll.com/t".into()))],
+        )
+        .await
+        .unwrap();
+        let link: Option<String> = sqlx::query_scalar(
+            "SELECT link FROM title_services WHERE title_id = ? AND service = 'crunchyroll'",
+        )
+        .bind(id)
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(link.as_deref(), Some("https://crunchyroll.com/t"));
+    }
+
+    #[tokio::test]
+    async fn upsert_persists_plex_rating_key() {
+        let (p, _dir) = pool().await;
+        let mut m = merged("tt2", "P", &[], &[Service::Plex]);
+        m.plex_rating_key = Some("49518".into());
+        let id = upsert_title(&p, &m).await.unwrap();
+        let rk: Option<String> =
+            sqlx::query_scalar("SELECT plex_rating_key FROM titles WHERE id = ?")
+                .bind(id)
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(rk.as_deref(), Some("49518"));
     }
 }

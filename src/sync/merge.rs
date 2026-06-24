@@ -53,6 +53,8 @@ pub struct MergedTitle {
     pub genres: Vec<String>,
     pub cast: Vec<String>,
     pub services: Vec<Service>,
+    pub plex_rating_key: Option<String>,
+    pub links: Vec<(Service, String)>,
     pub poster: Option<ImageRef>,
     pub backdrop: Option<ImageRef>,
 }
@@ -126,6 +128,12 @@ pub fn merge(fetched: Vec<FetchedTitle>) -> Vec<MergedTitle> {
             }
             existing.poster = prefer_image(existing.poster.take(), f.poster);
             existing.backdrop = prefer_image(existing.backdrop.take(), f.backdrop);
+            existing.plex_rating_key = existing.plex_rating_key.take().or(f.plex_rating_key);
+            for (svc, link) in f.links {
+                if !existing.links.iter().any(|(s, _)| *s == svc) {
+                    existing.links.push((svc, link));
+                }
+            }
         } else {
             order.push(key.clone());
             by_key.insert(
@@ -143,6 +151,8 @@ pub fn merge(fetched: Vec<FetchedTitle>) -> Vec<MergedTitle> {
                     genres: Vec::new(),
                     cast: f.cast,
                     services: f.services,
+                    plex_rating_key: f.plex_rating_key.clone(),
+                    links: f.links.clone(),
                     poster: f.poster,
                     backdrop: f.backdrop,
                 },
@@ -317,8 +327,58 @@ mod tests {
             genres,
             cast: vec![],
             services,
+            plex_rating_key: None,
+            links: vec![],
             poster: None,
             backdrop: None,
         }
+    }
+
+    #[test]
+    fn merge_unions_links_and_fills_rating_key() {
+        use crate::models::{Service, TitleKind};
+        let plex = FetchedTitle {
+            imdb_id: Some("tt9".into()),
+            tmdb_id: None,
+            plex_guid: None,
+            title: "X".into(),
+            year: Some(2020),
+            kind: TitleKind::Movie,
+            score: None,
+            length: None,
+            description: None,
+            genres: vec![],
+            cast: vec![],
+            services: vec![Service::Plex],
+            plex_rating_key: Some("777".into()),
+            links: vec![],
+            poster: None,
+            backdrop: None,
+        };
+        let motn = FetchedTitle {
+            imdb_id: Some("tt9".into()),
+            tmdb_id: None,
+            plex_guid: None,
+            title: "X".into(),
+            year: Some(2020),
+            kind: TitleKind::Movie,
+            score: None,
+            length: None,
+            description: None,
+            genres: vec![],
+            cast: vec![],
+            services: vec![Service::Crunchyroll],
+            plex_rating_key: None,
+            links: vec![(Service::Crunchyroll, "https://crunchyroll.com/x".into())],
+            poster: None,
+            backdrop: None,
+        };
+        let out = merge(vec![plex, motn]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].plex_rating_key.as_deref(), Some("777"));
+        assert_eq!(
+            out[0].links,
+            vec![(Service::Crunchyroll, "https://crunchyroll.com/x".into())]
+        );
     }
 }

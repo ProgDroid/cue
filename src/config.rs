@@ -10,6 +10,9 @@ pub struct Config {
     pub motn_api_key: Option<String>,
     pub plex_url: Option<String>,
     pub plex_token: Option<String>,
+    /// Browser-facing Plex base URL for building watch links; defaults to
+    /// `PLEX_URL` (identical on a single-host self-hosted deployment).
+    pub plex_web_url: Option<String>,
     pub region: Option<String>,
     pub sync_cron: Option<String>,
 }
@@ -26,6 +29,9 @@ impl Config {
             motn_api_key: get("MOTN_API_KEY"),
             plex_url: get("PLEX_URL"),
             plex_token: get("PLEX_TOKEN"),
+            // Browser-facing Plex base for watch links; defaults to PLEX_URL
+            // (identical on a single-host self-hosted deployment).
+            plex_web_url: get("PLEX_WEB_URL").or_else(|| get("PLEX_URL")),
             region: get("REGION"),
             sync_cron: get("SYNC_CRON"),
         }
@@ -158,5 +164,22 @@ mod tests {
             err.contains("SYNC_CRON"),
             "error should name the var: {err}"
         );
+    }
+
+    #[test]
+    fn plex_web_url_defaults_to_plex_url() {
+        let m = HashMap::from([("PLEX_URL", "http://lan:32400")]);
+        let c = Config::load(getter(m));
+        assert_eq!(c.plex_web_url.as_deref(), Some("http://lan:32400"));
+    }
+
+    #[test]
+    fn plex_web_url_wins_when_explicitly_set() {
+        let m = HashMap::from([
+            ("PLEX_URL", "http://lan:32400"),
+            ("PLEX_WEB_URL", "https://plex.example.com"),
+        ]);
+        let c = Config::load(getter(m));
+        assert_eq!(c.plex_web_url.as_deref(), Some("https://plex.example.com"));
     }
 }

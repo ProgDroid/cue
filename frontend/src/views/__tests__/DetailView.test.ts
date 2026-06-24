@@ -12,7 +12,7 @@ const listItem: Title = {
   type: 'movie', genres: ['Animation', 'Musical'], score: 8.4, anilistScore: null, len: '105 min',
   watched: false, rating: null,
 }
-const detail: TitleDetail = { ...listItem, desc: 'A boy and music.', cast: ['Anthony Gonzalez'] }
+const detail: TitleDetail = { ...listItem, desc: 'A boy and music.', cast: ['Anthony Gonzalez'], watchable: [] }
 
 beforeEach(() => { setActivePinia(createPinia()); vi.restoreAllMocks() })
 
@@ -68,7 +68,7 @@ describe('DetailView', () => {
   })
 
   it('re-fetches when the route id changes', async () => {
-    const detail6: TitleDetail = { ...listItem, id: 6, title: 'Up', desc: 'A balloon.', cast: ['Ed Asner'] }
+    const detail6: TitleDetail = { ...listItem, id: 6, title: 'Up', desc: 'A balloon.', cast: ['Ed Asner'], watchable: [] }
     vi.spyOn(client, 'getTitle').mockImplementation((id) =>
       id === 6 ? Promise.resolve(detail6) : Promise.resolve(detail),
     )

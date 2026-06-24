@@ -291,3 +291,26 @@ hardening pass — backend tests 129 passing, clippy `-D warnings` clean.)
   real `/changes` response as a `parse_changes` fixture to lock the parser to live data.
 - **MOTN cache state in settings UI (deferred):** `/api/sync/status` could surface
   cache size + last seed vs delta mode. Out of scope for the incremental-sync plan.
+
+## Watch-at-source deep links (2026-06-24, branch feat/watch-at-source-links)
+
+Whole-branch review verdict was **Ready to merge** (no Critical/Major). These are
+non-blocking follow-ups surfaced during the review:
+
+- **Route-level test for the non-allowlisted-link → 404 path** (`watch::redirect`):
+  the `is_allowed_motn_link` predicate is unit-tested (http/wrong-host/Plex), but
+  no integration test seeds a stored-but-non-allowlisted link and asserts the
+  `tracing::warn` arm returns 404. The most security-adjacent of the deferred gaps.
+- **Log the swallowed DB error in `watch::redirect`:** the `plex_rating_key`/`link`
+  lookups use `.ok()`, turning a transient DB error into a silent 404 with no log
+  line. Add a `tracing::warn` on the `Err` arm for debuggability (read-only path,
+  not a correctness/security issue).
+- **`watchable` vs `plex_web_url` residual edge:** `watchable` gates Plex on
+  `plex_rating_key + machine_id` but not `plex_web_url`. Removing `PLEX_URL`/
+  `PLEX_WEB_URL` after a successful Plex sync would render a "Watch on Plex" button
+  whose redirect 404s. Pathological config change (can't sync Plex without
+  `PLEX_URL`); document or add the guard if it ever bites.
+- **Minor test/cosmetic niceties:** rename `run_sync_persists_server_meta_non_fatally`
+  → `…_persists_server_meta` (the Err test is the real non-fatal guard); add an
+  exclusion assertion to the `watchable` test; `color-mix` in WatchLinks.vue needs
+  Baseline-2023 browsers (acceptable for self-hosted).

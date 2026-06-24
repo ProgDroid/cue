@@ -4,6 +4,7 @@ pub mod images;
 pub mod import;
 pub mod sync;
 pub mod user_data;
+pub mod watch;
 
 use actix_web::{web, HttpResponse};
 
@@ -35,6 +36,10 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
                 web::resource("/titles/{id}/watched")
                     .app_data(user_data::rating_json_config())
                     .route(web::put().to(user_data::set_watched)),
+            )
+            .route(
+                "/titles/{id}/watch/{service}",
+                web::get().to(watch::redirect),
             )
             .route("/titles/{id}/poster", web::get().to(images::poster))
             .route("/titles/{id}/backdrop", web::get().to(images::backdrop))

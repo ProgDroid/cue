@@ -25,6 +25,11 @@ pub struct CachedTitle {
     pub genres: Vec<String>,
     pub cast: Vec<String>,
     pub services: Vec<String>,
+    /// Per-service watch links, stored as `(service_str, url)` so the JSON is
+    /// enum-repr-independent. `#[serde(default)]` keeps pre-existing cached rows
+    /// (written before this field) deserializable.
+    #[serde(default)]
+    pub links: Vec<(String, String)>,
     #[serde(default)]
     pub poster_url: Option<String>,
     #[serde(default)]
@@ -45,6 +50,11 @@ impl From<&FetchedTitle> for CachedTitle {
             genres: t.genres.clone(),
             cast: t.cast.clone(),
             services: t.services.iter().map(|s| s.as_str().to_string()).collect(),
+            links: t
+                .links
+                .iter()
+                .map(|(s, l)| (s.as_str().to_string(), l.clone()))
+                .collect(),
             poster_url: t
                 .poster
                 .as_ref()
@@ -80,6 +90,12 @@ impl CachedTitle {
                 .services
                 .iter()
                 .filter_map(|s| Service::parse(s))
+                .collect(),
+            plex_rating_key: None,
+            links: self
+                .links
+                .iter()
+                .filter_map(|(s, l)| Service::parse(s).map(|svc| (svc, l.clone())))
                 .collect(),
             poster: self.poster_url.map(|value| ImageRef {
                 value,
@@ -203,6 +219,8 @@ mod tests {
             genres: vec!["drama".into()],
             cast: vec!["A".into(), "B".into()],
             services: vec![Service::Disney],
+            plex_rating_key: None,
+            links: vec![],
             poster: None,
             backdrop: None,
         }
@@ -287,5 +305,18 @@ mod tests {
         let rebuilt = back.into_fetched();
         assert!(rebuilt.poster.is_none());
         assert!(rebuilt.backdrop.is_none());
+    }
+
+    #[test]
+    fn cached_title_roundtrips_links() {
+        use crate::models::Service;
+        let mut ft = sample();
+        ft.links = vec![(Service::Crunchyroll, "https://crunchyroll.com/x".into())];
+        let cached = CachedTitle::from(&ft);
+        let back = cached.into_fetched();
+        assert_eq!(
+            back.links,
+            vec![(Service::Crunchyroll, "https://crunchyroll.com/x".into())]
+        );
     }
 }

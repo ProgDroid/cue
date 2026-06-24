@@ -12,7 +12,10 @@
       "rating": 82,
       "runtime": 105,
       "streamingOptions": {
-        "gb": [{ "service": { "id": "disney" }, "type": "subscription" }]
+        "gb": [
+          { "service": { "id": "disney" }, "type": "subscription" },
+          { "service": { "id": "crunchyroll" }, "type": "subscription", "link": "https://www.crunchyroll.com/series/abc" }
+        ]
       }
     }
   ],
