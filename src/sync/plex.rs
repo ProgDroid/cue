@@ -115,6 +115,8 @@ pub fn parse_section(json: &str) -> anyhow::Result<Vec<FetchedTitle>> {
                 genres: m.genre.into_iter().map(|g| g.tag).collect(),
                 cast: m.role.into_iter().map(|r| r.tag).collect(),
                 services: vec![Service::Plex],
+                plex_rating_key: None,
+                links: vec![],
                 poster: m.thumb.map(|value| ImageRef {
                     value,
                     remote: false,

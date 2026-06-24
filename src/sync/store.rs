@@ -277,6 +277,8 @@ mod tests {
             genres: genres.iter().map(|s| (*s).to_string()).collect(),
             cast: vec!["Actor".into()],
             services: services.to_vec(),
+            plex_rating_key: None,
+            links: vec![],
             poster: None,
             backdrop: None,
         }
@@ -485,6 +487,8 @@ mod tests {
             genres: vec![],
             cast: vec![],
             services: vec![],
+            plex_rating_key: None,
+            links: vec![],
             poster: None,
             backdrop: None,
         };

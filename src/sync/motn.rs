@@ -205,6 +205,8 @@ fn show_to_fetched(s: Show, country: &str, services: &[Service]) -> FetchedTitle
         genres: s.genres.into_iter().map(|g| g.name).collect(),
         cast: s.cast,
         services: svcs,
+        plex_rating_key: None,
+        links: vec![],
         poster,
         backdrop,
     }
@@ -714,6 +716,7 @@ mod tests {
             genres: vec![],
             cast: vec![],
             services: vec!["disney".into()],
+            links: vec![],
             poster_url: None,
             backdrop_url: None,
         }

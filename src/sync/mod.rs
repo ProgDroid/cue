@@ -52,6 +52,10 @@ pub struct FetchedTitle {
     pub genres: Vec<String>,
     pub cast: Vec<String>,
     pub services: Vec<Service>,
+    /// Plex per-item ratingKey (Plex source only); used to build a Plex web link.
+    pub plex_rating_key: Option<String>,
+    /// Per-service "watch here" web links (MOTN `link`); empty for Plex.
+    pub links: Vec<(Service, String)>,
     pub poster: Option<ImageRef>,
     pub backdrop: Option<ImageRef>,
 }
@@ -279,6 +283,8 @@ mod tests {
             genres: vec![],
             cast: vec![],
             services: vec![Service::Plex],
+            plex_rating_key: None,
+            links: vec![],
             poster: None,
             backdrop: None,
         };
@@ -329,6 +335,8 @@ mod orchestrator_tests {
             genres: vec!["action".into()],
             cast: vec![],
             services,
+            plex_rating_key: None,
+            links: vec![],
             poster: None,
             backdrop: None,
         }
