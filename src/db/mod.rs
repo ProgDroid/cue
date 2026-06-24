@@ -1,3 +1,4 @@
+pub mod app_meta;
 pub mod catalogue;
 pub mod embeddings;
 pub mod motn_cache;
