@@ -37,6 +37,10 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
                     .app_data(user_data::rating_json_config())
                     .route(web::put().to(user_data::set_watched)),
             )
+            .route(
+                "/titles/{id}/watch/{service}",
+                web::get().to(watch::redirect),
+            )
             .route("/titles/{id}/poster", web::get().to(images::poster))
             .route("/titles/{id}/backdrop", web::get().to(images::backdrop))
             .service(
