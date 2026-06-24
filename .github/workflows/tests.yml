@@ -86,5 +86,8 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
 
+      # Known-benign advisories (e.g. rsa/RUSTSEC-2023-0071, only reachable via
+      # the unused sqlx mysql/postgres backends) are suppressed with a documented
+      # rationale in .cargo/audit.toml; a genuinely new advisory still red-Xes here.
       - name: Audit Cargo.lock against the RUSTSEC advisory DB
         run: cargo audit
