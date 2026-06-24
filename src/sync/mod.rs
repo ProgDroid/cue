@@ -89,6 +89,15 @@ pub trait CatalogueSource: Send + Sync {
     async fn fetch_watch_history(&self) -> anyhow::Result<Vec<WatchRecord>> {
         Ok(Vec::new())
     }
+
+    /// Server-global metadata to persist after a successful fetch (e.g. the Plex
+    /// `machineIdentifier`, used to build watch deep links). Default: none.
+    ///
+    /// # Errors
+    /// Returns an error if the upstream request fails or the body cannot be parsed.
+    async fn server_meta(&self) -> anyhow::Result<Vec<(String, String)>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Run one full sync: fetch every source, merge, reconcile each successfully
