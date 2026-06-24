@@ -57,6 +57,16 @@ describe('DetailView', () => {
     expect(w.text()).toContain('Coco')
   })
 
+  it('shows both AniList and generic Rating pills when both scores are present', async () => {
+    const detailWithScores: TitleDetail = { ...detail, score: 7.4, anilistScore: 8.6 }
+    vi.spyOn(client, 'getTitle').mockResolvedValue(detailWithScores)
+    const w = await mountAt(5)
+    expect(w.find('[data-test="detail-anilist"]').exists()).toBe(true)
+    expect(w.find('[data-test="detail-score"]').exists()).toBe(true)
+    expect(w.text()).toContain('8.6')
+    expect(w.text()).toContain('7.4')
+  })
+
   it('re-fetches when the route id changes', async () => {
     const detail6: TitleDetail = { ...listItem, id: 6, title: 'Up', desc: 'A balloon.', cast: ['Ed Asner'] }
     vi.spyOn(client, 'getTitle').mockImplementation((id) =>

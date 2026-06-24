@@ -47,4 +47,20 @@ describe('PosterCard', () => {
     // Service is conveyed by a labelled dot, not colour alone.
     expect(w.find('.svc-dot').attributes('aria-label')).toBe('Crunchyroll')
   })
+
+  it('shows the AniList pill when anilistScore is present, hiding the generic pill', () => {
+    const base = title
+    const w = mount(PosterCard, { props: { title: { ...base, score: 7.4, anilistScore: 8.6 }, watched: false } })
+    expect(w.find('[data-test="anilist-badge"]').exists()).toBe(true)
+    expect(w.find('[data-test="score-badge"]').exists()).toBe(false)
+    expect(w.text()).toContain('8.6')
+  })
+
+  it('falls back to the generic Rating pill when anilistScore is null', () => {
+    const base = title
+    const w = mount(PosterCard, { props: { title: { ...base, score: 7.4, anilistScore: null }, watched: false } })
+    expect(w.find('[data-test="anilist-badge"]').exists()).toBe(false)
+    expect(w.find('[data-test="score-badge"]').exists()).toBe(true)
+    expect(w.text()).toContain('7.4')
+  })
 })
