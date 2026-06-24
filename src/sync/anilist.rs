@@ -1,84 +1,110 @@
 //! `AniList` enrichment: offline Fribb id-map (imdb/tmdb -> anilist) + batched
 //! score fetch. Additive and wipe-guarded — any failure retains cached scores.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use serde::Deserialize;
 use sqlx::SqlitePool;
 
+use crate::models::TitleKind;
+
 /// Maps a title's external ids to its `AniList` id, built from Fribb's
 /// `anime-list-full.json`. An id present here means the title IS anime.
+///
+/// TMDB movie and tv are SEPARATE id namespaces (`movie/123` != `tv/123`), so
+/// they are kept in distinct maps and disambiguated by the title's kind — a
+/// live-action movie whose tmdb id collides numerically with an anime's tv id
+/// must NOT match. Keys that resolve to more than one `AniList` id (e.g. a
+/// franchise's OVAs sharing one imdb id) are dropped so we never surface an
+/// arbitrary installment's score.
 #[derive(Debug, Default)]
 pub struct AnimeIdMap {
-    imdb_map: HashMap<String, i64>,
-    tmdb_map: HashMap<String, i64>,
+    imdb: HashMap<String, i64>,
+    tmdb_tv: HashMap<String, i64>,
+    tmdb_movie: HashMap<String, i64>,
+}
+
+/// Keep only keys that map to exactly one `AniList` id; drop ambiguous keys.
+fn unambiguous(m: HashMap<String, HashSet<i64>>) -> HashMap<String, i64> {
+    m.into_iter()
+        .filter(|(_, v)| v.len() == 1)
+        .map(|(k, v)| (k, v.into_iter().next().expect("len == 1")))
+        .collect()
 }
 
 impl AnimeIdMap {
-    /// Build the map from Fribb's `anime-list-full.json`. Defensive about the
-    /// documented-but-irregular shapes (`imdb_id`: string|array; `themoviedb_id`:
-    /// int|{tv,movie[]}) — anything unexpected is skipped, not fatal.
+    /// Build the map from Fribb's `anime-list-full.json`. The real file uses
+    /// `imdb_id`: array-of-strings and `themoviedb_id`: `{tv, movie[]}` object;
+    /// anything unexpected is skipped, not fatal.
     ///
     /// # Errors
     /// Returns an error only if the top-level JSON is not an array.
     pub fn parse(json: &str) -> anyhow::Result<Self> {
         let entries: Vec<serde_json::Value> = serde_json::from_str(json)?;
-        let mut imdb_map = HashMap::new();
-        let mut tmdb_map = HashMap::new();
+        // Accumulate candidate ids per key, then drop any key with >1 distinct id.
+        let mut imdb: HashMap<String, HashSet<i64>> = HashMap::new();
+        let mut tmdb_tv: HashMap<String, HashSet<i64>> = HashMap::new();
+        let mut tmdb_movie: HashMap<String, HashSet<i64>> = HashMap::new();
         for e in entries {
             let Some(anilist) = e.get("anilist_id").and_then(serde_json::Value::as_i64) else {
                 continue;
             };
             match e.get("imdb_id") {
                 Some(serde_json::Value::String(s)) => {
-                    imdb_map.insert(s.clone(), anilist);
+                    imdb.entry(s.clone()).or_default().insert(anilist);
                 }
                 Some(serde_json::Value::Array(a)) => {
                     for v in a {
                         if let Some(s) = v.as_str() {
-                            imdb_map.insert(s.to_string(), anilist);
+                            imdb.entry(s.to_string()).or_default().insert(anilist);
                         }
                     }
                 }
                 _ => {}
             }
-            match e.get("themoviedb_id") {
-                Some(serde_json::Value::Number(n)) => {
-                    if let Some(i) = n.as_i64() {
-                        tmdb_map.insert(i.to_string(), anilist);
-                    }
+            if let Some(serde_json::Value::Object(o)) = e.get("themoviedb_id") {
+                if let Some(i) = o.get("tv").and_then(serde_json::Value::as_i64) {
+                    tmdb_tv.entry(i.to_string()).or_default().insert(anilist);
                 }
-                Some(serde_json::Value::Object(o)) => {
-                    if let Some(i) = o.get("tv").and_then(serde_json::Value::as_i64) {
-                        tmdb_map.insert(i.to_string(), anilist);
-                    }
-                    if let Some(serde_json::Value::Array(a)) = o.get("movie") {
-                        for v in a {
-                            if let Some(i) = v.as_i64() {
-                                tmdb_map.insert(i.to_string(), anilist);
-                            }
+                if let Some(serde_json::Value::Array(a)) = o.get("movie") {
+                    for v in a {
+                        if let Some(i) = v.as_i64() {
+                            tmdb_movie.entry(i.to_string()).or_default().insert(anilist);
                         }
                     }
                 }
-                _ => {}
             }
         }
-        Ok(Self { imdb_map, tmdb_map })
+        Ok(Self {
+            imdb: unambiguous(imdb),
+            tmdb_tv: unambiguous(tmdb_tv),
+            tmdb_movie: unambiguous(tmdb_movie),
+        })
     }
 
-    /// Resolve a title's `AniList` id from its external ids (imdb wins).
-    /// cue's tmdb id may be prefixed (`"movie/9"`); the bare number is matched.
+    /// Resolve a title's `AniList` id from its external ids (imdb wins). cue's
+    /// tmdb id may be prefixed (`"movie/9"`); the bare number is matched against
+    /// the namespace selected by `kind` (series -> tv ids, movie -> movie ids).
     #[must_use]
-    pub fn resolve(&self, imdb_id: Option<&str>, tmdb_id: Option<&str>) -> Option<i64> {
+    pub fn resolve(
+        &self,
+        imdb_id: Option<&str>,
+        tmdb_id: Option<&str>,
+        kind: TitleKind,
+    ) -> Option<i64> {
         if let Some(i) = imdb_id {
-            if let Some(a) = self.imdb_map.get(i) {
+            if let Some(a) = self.imdb.get(i) {
                 return Some(*a);
             }
         }
         if let Some(t) = tmdb_id {
             let key = t.rsplit('/').next().unwrap_or(t);
-            if let Some(a) = self.tmdb_map.get(key) {
+            let map = match kind {
+                TitleKind::Series => &self.tmdb_tv,
+                TitleKind::Movie => &self.tmdb_movie,
+            };
+            if let Some(a) = map.get(key) {
                 return Some(*a);
             }
         }
@@ -219,20 +245,22 @@ pub async fn enrich(pool: &SqlitePool, data_dir: &Path) -> anyhow::Result<u64> {
         }
     };
 
-    // (db_id, imdb_id, tmdb_id, existing_anilist_score)
-    #[allow(clippy::type_complexity)] // 4-tuple from a raw query; a named struct would be overkill
-    let titles: Vec<(i64, Option<String>, Option<String>, Option<f64>)> =
-        sqlx::query_as("SELECT id, imdb_id, tmdb_id, anilist_score FROM titles")
+    // (db_id, imdb_id, tmdb_id, type, existing_anilist_score)
+    #[allow(clippy::type_complexity)] // 5-tuple from a raw query; a named struct would be overkill
+    let titles: Vec<(i64, Option<String>, Option<String>, String, Option<f64>)> =
+        sqlx::query_as("SELECT id, imdb_id, tmdb_id, type, anilist_score FROM titles")
             .fetch_all(pool)
             .await?;
 
-    // (title_id, anilist_id) for matched anime that still need a score.
+    // (title_id, anilist_id) for matched anime that still need a score. `kind`
+    // selects the tmdb namespace so a movie can't match an anime's tv id.
     let mut pending: Vec<(i64, i64)> = Vec::new();
-    for (id, imdb, tmdb, existing) in titles {
+    for (id, imdb, tmdb, kind_str, existing) in titles {
         if existing.is_some() {
             continue; // already scored — skip (refresh is a deferred follow-up)
         }
-        if let Some(anilist) = map.resolve(imdb.as_deref(), tmdb.as_deref()) {
+        let kind = TitleKind::parse(&kind_str).unwrap_or(TitleKind::Movie);
+        if let Some(anilist) = map.resolve(imdb.as_deref(), tmdb.as_deref(), kind) {
             pending.push((id, anilist));
         }
     }
@@ -321,7 +349,7 @@ mod tests {
 
         // TV entry: anilist 290, imdb tt0286390, tmdb tv 26209
         assert_eq!(
-            map.resolve(Some("tt0286390"), None),
+            map.resolve(Some("tt0286390"), None, TitleKind::Series),
             Some(290),
             "TV entry resolved by imdb_id"
         );
@@ -329,43 +357,105 @@ mod tests {
         // MOVIE entry: anilist 164, imdb tt0119698, tmdb movie [128]
         // Test tmdb match with cue's "movie/<id>" prefix form
         assert_eq!(
-            map.resolve(None, Some("movie/128")),
+            map.resolve(None, Some("movie/128"), TitleKind::Movie),
             Some(164),
             "MOVIE entry resolved by tmdb with prefix"
         );
 
-        // Bare tmdb number also matches
+        // Bare tmdb number also matches (kind selects the movie namespace)
         assert_eq!(
-            map.resolve(None, Some("128")),
+            map.resolve(None, Some("128"), TitleKind::Movie),
             Some(164),
             "MOVIE entry resolved by bare tmdb id"
         );
 
         // Entry with no imdb_id, only tmdb tv: anilist 1596, tmdb tv 29241
         assert_eq!(
-            map.resolve(None, Some("29241")),
+            map.resolve(None, Some("29241"), TitleKind::Series),
             Some(1596),
             "OVA-no-imdb entry resolved by tmdb tv"
         );
 
         // imdb takes priority over tmdb when both are provided
         assert_eq!(
-            map.resolve(Some("tt0286390"), Some("128")),
+            map.resolve(Some("tt0286390"), Some("128"), TitleKind::Series),
             Some(290),
             "imdb wins over tmdb"
         );
 
         // Unknown id -> None
         assert_eq!(
-            map.resolve(Some("tt0000000"), None),
+            map.resolve(Some("tt0000000"), None, TitleKind::Movie),
             None,
             "unknown imdb_id returns None"
         );
         assert_eq!(
-            map.resolve(None, Some("movie/9999999")),
+            map.resolve(None, Some("movie/9999999"), TitleKind::Movie),
             None,
             "unknown tmdb_id returns None"
         );
-        assert_eq!(map.resolve(None, None), None, "both None returns None");
+        assert_eq!(
+            map.resolve(None, None, TitleKind::Movie),
+            None,
+            "both None returns None"
+        );
+    }
+
+    #[test]
+    fn tmdb_namespace_separates_tv_and_movie() {
+        // The same integer is a TV id for one anime and a MOVIE id for another —
+        // TMDB's movie/tv id spaces are distinct, so the kind must select which.
+        let json = r#"[
+            {"anilist_id":1,"themoviedb_id":{"tv":500}},
+            {"anilist_id":2,"themoviedb_id":{"movie":[500]}}
+        ]"#;
+        let map = AnimeIdMap::parse(json).unwrap();
+        assert_eq!(map.resolve(None, Some("500"), TitleKind::Series), Some(1));
+        assert_eq!(map.resolve(None, Some("500"), TitleKind::Movie), Some(2));
+        assert_eq!(
+            map.resolve(None, Some("movie/500"), TitleKind::Movie),
+            Some(2),
+            "prefixed form resolves by kind, not by the prefix"
+        );
+
+        // The "Dude, Where's My Car?" bug: a live-action MOVIE whose tmdb id
+        // numerically collides with an anime's TV id must NOT match.
+        let tv_only =
+            AnimeIdMap::parse(r#"[{"anilist_id":9,"themoviedb_id":{"tv":777}}]"#).unwrap();
+        assert_eq!(
+            tv_only.resolve(None, Some("777"), TitleKind::Movie),
+            None,
+            "a movie must not match an anime tv id"
+        );
+    }
+
+    #[test]
+    fn ambiguous_keys_are_dropped() {
+        // The "Dominion" bug: one imdb id (and one shared tmdb tv id) maps to
+        // three different OVAs — there is no right single score, so drop it.
+        let json = r#"[
+            {"anilist_id":1151,"imdb_id":["tt0158591"],"themoviedb_id":{"tv":45137}},
+            {"anilist_id":1152,"imdb_id":["tt0158591"],"themoviedb_id":{"tv":45137}},
+            {"anilist_id":2181,"imdb_id":["tt0158591"],"themoviedb_id":{"tv":45137}}
+        ]"#;
+        let map = AnimeIdMap::parse(json).unwrap();
+        assert_eq!(
+            map.resolve(Some("tt0158591"), None, TitleKind::Series),
+            None,
+            "imdb id mapping to multiple anilist ids is ambiguous -> dropped"
+        );
+        assert_eq!(
+            map.resolve(None, Some("45137"), TitleKind::Series),
+            None,
+            "tmdb tv id shared by the same OVAs is also dropped"
+        );
+
+        // A key that maps to exactly one id still resolves.
+        let single = AnimeIdMap::parse(
+            r#"[{"anilist_id":5,"imdb_id":["tt1"],"themoviedb_id":{"movie":[7]}}]"#,
+        )
+        .unwrap();
+        assert_eq!(single.resolve(Some("tt1"), None, TitleKind::Movie), Some(5));
+        assert_eq!(single.resolve(None, Some("7"), TitleKind::Movie), Some(5));
     }
 }
