@@ -6,6 +6,7 @@ import { getTitle, NotFoundError } from '@/api/client'
 import type { TitleDetail } from '@/types'
 import ServicePill from '@/components/ServicePill.vue'
 import StarRating from '@/components/StarRating.vue'
+import WatchLinks from '@/components/WatchLinks.vue'
 import { posterPlaceholder, monogram } from '@/design/tokens'
 
 const route = useRoute()
@@ -126,6 +127,8 @@ const simFailed = ref<Record<number, boolean>>({})
         >
           {{ idIsWatched ? '✓ Watched' : 'Mark as watched' }}
         </button>
+
+        <WatchLinks :id="detail.id" :watchable="detail.watchable" />
 
         <!-- Your rating well -->
         <div class="rating-well">
