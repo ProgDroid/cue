@@ -3,6 +3,8 @@
 
 use std::collections::HashMap;
 
+use serde::Deserialize;
+
 /// Maps a title's external ids to its `AniList` id, built from Fribb's
 /// `anime-list-full.json`. An id present here means the title IS anime.
 #[derive(Debug, Default)]
@@ -82,11 +84,85 @@ impl AnimeIdMap {
     }
 }
 
+const ANILIST_URL: &str = "https://graphql.anilist.co";
+const SCORES_QUERY: &str =
+    "query($ids:[Int]){Page(perPage:50){media(id_in:$ids,type:ANIME){id averageScore}}}";
+
+#[derive(Deserialize)]
+struct GqlResp {
+    data: Option<GqlData>,
+}
+#[derive(Deserialize)]
+struct GqlData {
+    #[serde(rename = "Page")]
+    page: GqlPage,
+}
+#[derive(Deserialize)]
+struct GqlPage {
+    media: Vec<GqlMedia>,
+}
+#[derive(Deserialize)]
+struct GqlMedia {
+    id: i64,
+    #[serde(rename = "averageScore")]
+    average_score: Option<i64>,
+}
+
+/// Parse an `AniList` `Page` response into `(anilist_id, score/10)` pairs.
+///
+/// # Errors
+/// Returns an error if the body is not the expected JSON shape.
+pub fn parse_scores(body: &str) -> anyhow::Result<Vec<(i64, Option<f64>)>> {
+    let r: GqlResp = serde_json::from_str(body)?;
+    let media = r.data.map(|d| d.page.media).unwrap_or_default();
+    Ok(media
+        .into_iter()
+        .map(|m| {
+            #[allow(clippy::cast_precision_loss)] // scores are 0..=100, lossless in f64
+            let s = m.average_score.map(|v| v as f64 / 10.0);
+            (m.id, s)
+        })
+        .collect())
+}
+
+/// Fetch scores for up to 50 `AniList` ids in one request.
+///
+/// # Errors
+/// Returns an error if the request fails or the body cannot be parsed.
+pub async fn fetch_scores(
+    client: &reqwest::Client,
+    ids: &[i64],
+) -> anyhow::Result<Vec<(i64, Option<f64>)>> {
+    let body = serde_json::json!({ "query": SCORES_QUERY, "variables": { "ids": ids } });
+    let text = client
+        .post(ANILIST_URL)
+        .json(&body)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    parse_scores(&text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const SAMPLE: &str = include_str!("testdata/fribb_sample.json");
+
+    #[test]
+    fn parses_anilist_page_scores_normalized_to_ten() {
+        let body = r#"{"data":{"Page":{"media":[
+        {"id":101759,"averageScore":86},
+        {"id":21,"averageScore":null}
+    ]}}}"#;
+        let got = parse_scores(body).unwrap();
+        assert_eq!(got.len(), 2);
+        assert!((got[0].1.unwrap() - 8.6).abs() < 1e-9);
+        assert_eq!(got[0].0, 101_759);
+        assert_eq!(got[1].1, None);
+    }
 
     #[test]
     fn resolves_anime_by_imdb_and_tmdb() {
