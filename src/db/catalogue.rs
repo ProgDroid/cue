@@ -86,14 +86,37 @@ pub async fn fetch_title(pool: &SqlitePool, id: i64) -> anyhow::Result<Option<Ti
         return Ok(None);
     };
 
-    let services: Vec<Service> =
-        sqlx::query_scalar::<_, String>("SELECT service FROM title_services WHERE title_id = ?")
+    let plex_rating_key: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT plex_rating_key FROM titles WHERE id = ?")
             .bind(id)
-            .fetch_all(pool)
+            .fetch_optional(pool)
             .await?
-            .iter()
-            .filter_map(|s| Service::parse(s))
-            .collect();
+            .flatten();
+
+    let service_rows = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT service, link FROM title_services WHERE title_id = ?",
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await?;
+    let services: Vec<Service> = service_rows
+        .iter()
+        .filter_map(|(s, _)| Service::parse(s))
+        .collect();
+
+    let machine_id = crate::db::app_meta::get(pool, "plex_machine_id").await?;
+    let mut watchable: Vec<String> = Vec::new();
+    for (svc, link) in &service_rows {
+        match Service::parse(svc) {
+            Some(Service::Plex) if plex_rating_key.is_some() && machine_id.is_some() => {
+                watchable.push("plex".to_string());
+            }
+            Some(Service::Crunchyroll | Service::Disney) if link.is_some() => {
+                watchable.push(svc.clone());
+            }
+            _ => {}
+        }
+    }
 
     let genres = sqlx::query_scalar::<_, String>(
         "SELECT genre FROM title_genres WHERE title_id = ? ORDER BY genre",
@@ -142,5 +165,63 @@ pub async fn fetch_title(pool: &SqlitePool, id: i64) -> anyhow::Result<Option<Ti
         cast,
         watched,
         rating,
+        watchable,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::SqlitePool;
+
+    use super::fetch_title;
+    use crate::db::{init_pool, seed::seed_if_empty};
+
+    async fn seeded_pool() -> (SqlitePool, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("test.db");
+        let url = format!("sqlite:{}", db.to_string_lossy().replace('\\', "/"));
+        let pool = init_pool(&url).await.unwrap();
+        seed_if_empty(&pool).await.unwrap();
+        (pool, dir)
+    }
+
+    #[actix_web::test]
+    async fn watchable_lists_only_resolvable_sources() {
+        let (pool, _dir) = seeded_pool().await;
+        // Give title 1 a plex_rating_key so the Plex watch link can be resolved.
+        sqlx::query("UPDATE titles SET plex_rating_key = '49518' WHERE id = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Plex membership with no link (link comes from rating key + machine id).
+        sqlx::query(
+            "INSERT OR REPLACE INTO title_services (title_id, service, link) VALUES (1, 'plex', NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Crunchyroll membership with a direct link.
+        sqlx::query(
+            "INSERT OR REPLACE INTO title_services (title_id, service, link) VALUES (1, 'crunchyroll', 'https://www.crunchyroll.com/x')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Write the machine id so Plex is considered resolvable.
+        crate::db::app_meta::set(&pool, "plex_machine_id", "MID")
+            .await
+            .unwrap();
+
+        let dto = fetch_title(&pool, 1).await.unwrap().unwrap();
+        assert!(
+            dto.watchable.contains(&"plex".to_string()),
+            "watchable should include plex; got {:?}",
+            dto.watchable
+        );
+        assert!(
+            dto.watchable.contains(&"crunchyroll".to_string()),
+            "watchable should include crunchyroll; got {:?}",
+            dto.watchable
+        );
+    }
 }

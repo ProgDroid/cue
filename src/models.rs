@@ -103,6 +103,8 @@ pub struct TitleDto {
     pub cast: Vec<String>,
     pub watched: bool,
     pub rating: Option<i64>,
+    /// Services that resolve to a working watch link (availability only — no URLs).
+    pub watchable: Vec<String>,
 }
 
 /// Slim list shape: `TitleDto` minus the DetailView-only `desc`/`cast`.
@@ -146,6 +148,7 @@ mod tests {
             cast: vec!["Ryan Gosling".to_string()],
             watched: false,
             rating: None,
+            watchable: vec![],
         };
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["type"], "movie");
