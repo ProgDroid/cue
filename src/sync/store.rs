@@ -110,7 +110,7 @@ pub async fn upsert_title(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<
     let id = if let Some(id) = existing {
         sqlx::query(
             "UPDATE titles SET imdb_id = ?, tmdb_id = ?, plex_guid = ?, title = ?, year = ?,
-             type = ?, imdb_rating = ?, length = ?, description = ?,
+             type = ?, score = ?, length = ?, description = ?,
              poster_url = ?, poster_plex = ?, backdrop_url = ?, backdrop_plex = ?,
              updated_at = datetime('now') WHERE id = ?",
         )
@@ -120,7 +120,7 @@ pub async fn upsert_title(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<
         .bind(&t.title)
         .bind(t.year)
         .bind(t.kind.as_str())
-        .bind(t.imdb_rating)
+        .bind(t.score)
         .bind(&t.length)
         .bind(&t.description)
         .bind(poster_url)
@@ -133,7 +133,7 @@ pub async fn upsert_title(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<
         id
     } else {
         sqlx::query_scalar::<_, i64>(
-            "INSERT INTO titles (imdb_id, tmdb_id, plex_guid, title, year, type, imdb_rating, length, description, poster_url, poster_plex, backdrop_url, backdrop_plex)
+            "INSERT INTO titles (imdb_id, tmdb_id, plex_guid, title, year, type, score, length, description, poster_url, poster_plex, backdrop_url, backdrop_plex)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
         )
         .bind(&t.imdb_id)
@@ -142,7 +142,7 @@ pub async fn upsert_title(pool: &SqlitePool, t: &MergedTitle) -> anyhow::Result<
         .bind(&t.title)
         .bind(t.year)
         .bind(t.kind.as_str())
-        .bind(t.imdb_rating)
+        .bind(t.score)
         .bind(&t.length)
         .bind(&t.description)
         .bind(poster_url)
@@ -271,7 +271,7 @@ mod tests {
             title: title.into(),
             year: 2020,
             kind: TitleKind::Movie,
-            imdb_rating: Some(7.5),
+            score: Some(7.5),
             length: "100 min".into(),
             description: "d".into(),
             genres: genres.iter().map(|s| (*s).to_string()).collect(),
@@ -479,7 +479,7 @@ mod tests {
             title: "C".into(),
             year: 2021,
             kind: TitleKind::Movie,
-            imdb_rating: None,
+            score: None,
             length: String::new(),
             description: String::new(),
             genres: vec![],

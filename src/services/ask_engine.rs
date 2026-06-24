@@ -244,7 +244,7 @@ impl AskEngine {
     async fn surprise(&self, ids: &[i64]) -> anyhow::Result<Vec<i64>> {
         let vectors = embeddings::load_all(&self.pool, EMBED_MODEL).await?;
         let vmap: HashMap<i64, Vec<f32>> = vectors.into_iter().collect();
-        let ratings = sqlx::query_as::<_, (i64, Option<f64>)>("SELECT id, imdb_rating FROM titles")
+        let ratings = sqlx::query_as::<_, (i64, Option<f64>)>("SELECT id, score FROM titles")
             .fetch_all(&self.pool)
             .await?;
         let rmap: HashMap<i64, f64> = ratings
@@ -292,7 +292,7 @@ impl AskEngine {
         // Build one row per id; genres joined in a second query.
         let mut by_id: HashMap<i64, Candidate> = HashMap::new();
         let rows = sqlx::query_as::<_, (i64, String, i64, String, Option<f64>)>(
-            "SELECT id, title, year, type, imdb_rating FROM titles",
+            "SELECT id, title, year, type, score FROM titles",
         )
         .fetch_all(&self.pool)
         .await?;

@@ -47,7 +47,7 @@ pub struct MergedTitle {
     pub title: String,
     pub year: i64,
     pub kind: TitleKind,
-    pub imdb_rating: Option<f64>,
+    pub score: Option<f64>,
     pub length: String,
     pub description: String,
     pub genres: Vec<String>,
@@ -117,7 +117,7 @@ pub fn merge(fetched: Vec<FetchedTitle>) -> Vec<MergedTitle> {
             existing.imdb_id = existing.imdb_id.take().or(f.imdb_id);
             existing.tmdb_id = existing.tmdb_id.take().or(f.tmdb_id);
             existing.plex_guid = existing.plex_guid.take().or(f.plex_guid);
-            existing.imdb_rating = existing.imdb_rating.or(f.imdb_rating);
+            existing.score = existing.score.or(f.score);
             if existing.description.is_empty() {
                 existing.description = f.description.unwrap_or_default();
             }
@@ -137,7 +137,7 @@ pub fn merge(fetched: Vec<FetchedTitle>) -> Vec<MergedTitle> {
                     title: f.title,
                     year: f.year.unwrap_or(0),
                     kind: f.kind,
-                    imdb_rating: f.imdb_rating,
+                    score: f.score,
                     length: f.length.unwrap_or_default(),
                     description: f.description.unwrap_or_default(),
                     genres: Vec::new(),
@@ -311,7 +311,7 @@ mod tests {
             title: "T".into(),
             year: Some(2001),
             kind,
-            imdb_rating: None,
+            score: None,
             length: None,
             description: None,
             genres,

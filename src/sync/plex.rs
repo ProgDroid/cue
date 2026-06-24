@@ -103,7 +103,7 @@ pub fn parse_section(json: &str) -> anyhow::Result<Vec<FetchedTitle>> {
                 title: m.title,
                 year: m.year,
                 kind,
-                imdb_rating: m.rating,
+                score: m.rating,
                 length,
                 description: m.summary,
                 genres: m.genre.into_iter().map(|g| g.tag).collect(),
