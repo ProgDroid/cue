@@ -11,6 +11,7 @@ use crate::db::sync_runs;
 use crate::models::{Service, TitleKind};
 use crate::services::embeddings::{backfill, Embedder};
 
+pub mod anilist;
 pub mod merge;
 pub mod motn;
 pub mod plex;
