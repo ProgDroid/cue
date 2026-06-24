@@ -22,6 +22,7 @@ export type Title = TitleListItem
 export interface TitleDetail extends TitleListItem {
   desc: string
   cast: string[]
+  watchable: ServiceKey[]
 }
 
 export interface AskResult {

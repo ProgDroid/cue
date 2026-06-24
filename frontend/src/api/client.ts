@@ -22,7 +22,12 @@ function isTitle(v: unknown): v is Title {
 function isTitleDetail(v: unknown): v is TitleDetail {
   if (!isTitle(v)) return false
   const r = v as unknown as Record<string, unknown>
-  return typeof r.desc === 'string' && Array.isArray(r.cast)
+  const watchable = r.watchable
+  const services: ReadonlyArray<string> = ['plex', 'disney', 'crunchyroll']
+  return typeof r.desc === 'string'
+    && Array.isArray(r.cast)
+    && Array.isArray(watchable)
+    && watchable.every((s) => typeof s === 'string' && services.includes(s))
 }
 
 export class NotFoundError extends Error {}

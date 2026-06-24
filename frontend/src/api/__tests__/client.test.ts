@@ -7,7 +7,7 @@ const listItem = {
   type: 'movie' as const, genres: ['Animation'], score: 8.4, anilistScore: null, len: '105 min',
   watched: false, rating: null,
 }
-const detail: TitleDetail = { ...listItem, desc: 'A boy.', cast: ['A. Gonzalez'] }
+const detail: TitleDetail = { ...listItem, desc: 'A boy.', cast: ['A. Gonzalez'], watchable: ['plex'] }
 
 function mockFetch(status: number, body: unknown) {
   return vi.fn().mockResolvedValue({
@@ -75,5 +75,27 @@ describe('api client', () => {
     await expect(getTitle(1)).rejects.toThrow(/HTTP 500/)
     vi.stubGlobal('fetch', mockFetch(500, null))
     await expect(getTitle(1)).rejects.not.toBeInstanceOf(NotFoundError)
+  })
+
+  it('getTitle accepts a detail with watchable: [\'plex\']', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, { ...detail, watchable: ['plex'] }))
+    const out = await getTitle(1)
+    expect(out.watchable).toEqual(['plex'])
+  })
+
+  it('getTitle rejects a detail with watchable containing an unknown service', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, { ...detail, watchable: ['netflix'] }))
+    await expect(getTitle(1)).rejects.toThrow(/invalid/)
+  })
+
+  it('getTitle rejects a detail with missing watchable', async () => {
+    const { watchable: _, ...noWatchable } = detail
+    vi.stubGlobal('fetch', mockFetch(200, noWatchable))
+    await expect(getTitle(1)).rejects.toThrow(/invalid/)
+  })
+
+  it('getTitle rejects a detail with non-array watchable', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, { ...detail, watchable: 'plex' }))
+    await expect(getTitle(1)).rejects.toThrow(/invalid/)
   })
 })
