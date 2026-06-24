@@ -4,6 +4,7 @@ pub mod images;
 pub mod import;
 pub mod sync;
 pub mod user_data;
+pub mod watch;
 
 use actix_web::{web, HttpResponse};
 

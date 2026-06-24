@@ -125,6 +125,9 @@ async fn main() -> std::io::Result<()> {
         base_url: cfg.plex_url.clone(),
         token: cfg.plex_token.clone(),
     };
+    let watch_cfg = cue::routes::watch::WatchConfig {
+        plex_web_url: cfg.plex_web_url.clone(),
+    };
 
     let static_dir = cfg.static_dir.clone();
     let bind_addr = cfg.bind_addr.clone();
@@ -136,6 +139,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(engine.clone()))
             .app_data(web::Data::new(runner.clone()))
             .app_data(web::Data::new(plex_art.clone()))
+            .app_data(web::Data::new(watch_cfg.clone()))
             .app_data(web::Data::new(StaticDir(static_dir.clone())))
             .configure(cue::routes::configure)
             // The `/api` scope is matched first; everything else (real assets
