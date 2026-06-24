@@ -56,6 +56,17 @@ fn guid_value(guids: &[Tagged], scheme: &str) -> Option<String> {
         .find_map(|g| g.id.strip_prefix(&prefix).map(str::to_string))
 }
 
+/// Path for a section's bulk listing, including `includeGuids=1`.
+///
+/// Plex does NOT return the per-item `<Guid>` external-ID array (`imdb://`,
+/// `tmdb://`, `plex://`) in a bulk `/library/sections/{key}/all` response
+/// unless `includeGuids=1` is requested. Without it, `parse_section` /
+/// `parse_watch_history` see an empty `guid` vec and every title resolves to a
+/// NULL `imdb_id` (so user-data writes 422 and watch-history rows are dropped).
+fn section_all_path(key: &str) -> String {
+    format!("/library/sections/{key}/all?includeGuids=1")
+}
+
 /// Parse one `/library/sections/{key}/all` JSON body into fetched titles.
 ///
 /// Only `movie` and `show` items are kept. Any other top-level `type` is
@@ -186,9 +197,7 @@ impl PlexClient {
         let mut out = Vec::new();
         for dir in sections.media_container.directory {
             if dir.kind == "movie" || dir.kind == "show" {
-                let body = self
-                    .get_json(&format!("/library/sections/{}/all", dir.key))
-                    .await?;
+                let body = self.get_json(&section_all_path(&dir.key)).await?;
                 out.extend(parse(&body)?);
             }
         }
@@ -262,6 +271,24 @@ mod tests {
         let show = &out[1];
         assert_eq!(show.kind, TitleKind::Series);
         assert_eq!(show.imdb_id.as_deref(), Some("tt11280740"));
+    }
+
+    #[test]
+    fn section_all_path_requests_external_guids() {
+        // Plex omits the <Guid> external-ID array (imdb://, tmdb://, plex://)
+        // from a bulk /library/sections/{key}/all listing unless includeGuids=1
+        // is set. Without it every Plex title deserializes with an empty guid
+        // vec, so imdb_id/tmdb_id/plex_guid are all NULL and downstream
+        // write/watch-history paths silently drop the title.
+        let path = section_all_path("3");
+        assert!(
+            path.starts_with("/library/sections/3/all"),
+            "unexpected base path: {path:?}"
+        );
+        assert!(
+            path.contains("includeGuids=1"),
+            "section listing must request external GUIDs, got {path:?}"
+        );
     }
 
     #[test]
