@@ -63,7 +63,7 @@ export const useCatalogueStore = defineStore('catalogue', {
         return (this.catalogue as Title[])
           .filter((t: Title) => t.id !== id && t.genres.some((g: string) => selfGenres.has(g)))
           .map((t: Title) => ({ t, shared: t.genres.filter((g: string) => selfGenres.has(g)).length }))
-          .sort((a, b) => b.shared - a.shared || (b.t.imdb ?? -Infinity) - (a.t.imdb ?? -Infinity))
+          .sort((a, b) => b.shared - a.shared || (b.t.score ?? -Infinity) - (a.t.score ?? -Infinity))
           .slice(0, 5)
           .map((x) => x.t)
       }
@@ -87,7 +87,7 @@ export const useCatalogueStore = defineStore('catalogue', {
       if (state.genre !== 'all') out = out.filter(t => t.genres.includes(state.genre))
 
       const byRating = (a: Title, b: Title) =>
-        (b.imdb ?? -Infinity) - (a.imdb ?? -Infinity)
+        (b.score ?? -Infinity) - (a.score ?? -Infinity)
       switch (state.sort) {
         case 'az': out.sort((a, b) => a.title.localeCompare(b.title)); break
         case 'year': out.sort((a, b) => b.year - a.year); break

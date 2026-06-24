@@ -156,9 +156,9 @@ const simFailed = ref<Record<number, boolean>>({})
             :service="svc"
             class="svc-pill-wrap"
           />
-          <span v-if="detail.imdb !== null" class="imdb-pill">
+          <span v-if="detail.score !== null" class="imdb-pill">
             <span class="imdb-star">★</span>
-            <span class="imdb-score">{{ detail.imdb }}</span>
+            <span class="imdb-score">{{ detail.score }}</span>
             <span class="imdb-label">IMDb</span>
           </span>
         </div>

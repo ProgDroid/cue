@@ -4,7 +4,7 @@ import type { TitleDetail, ServiceKey } from '@/types'
 
 const listItem = {
   id: 1, imdbId: 'tt1', title: 'Coco', year: 2017, services: ['disney'] as ServiceKey[],
-  type: 'movie' as const, genres: ['Animation'], imdb: 8.4, len: '105 min',
+  type: 'movie' as const, genres: ['Animation'], score: 8.4, anilistScore: null, len: '105 min',
   watched: false, rating: null,
 }
 const detail: TitleDetail = { ...listItem, desc: 'A boy.', cast: ['A. Gonzalez'] }

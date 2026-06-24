@@ -62,12 +62,12 @@ const posterSrc = computed(() => `/api/titles/${props.title.id}/poster`)
 
       <!-- IMDB rating badge (top-right) -->
       <div
-        v-if="title.imdb !== null"
+        v-if="title.score !== null"
         class="poster-imdb-badge"
-        :aria-label="`IMDb rating ${title.imdb}`"
+        :aria-label="`IMDb rating ${title.score}`"
       >
         <span class="imdb-star" aria-hidden="true">★</span>
-        <span class="imdb-score">{{ title.imdb }}</span>
+        <span class="imdb-score">{{ title.score }}</span>
       </div>
 
       <!-- Watched badge (bottom-right) -->
