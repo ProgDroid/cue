@@ -136,10 +136,12 @@ pub async fn run_sync(
     }
 
     let merged = merge::merge(fetched);
-    let mut id_services: Vec<(i64, Vec<Service>)> = Vec::with_capacity(merged.len());
+    #[allow(clippy::type_complexity)] // three-tuple (id, services, links) is self-documenting here
+    let mut id_services: Vec<(i64, Vec<Service>, Vec<(Service, String)>)> =
+        Vec::with_capacity(merged.len());
     for m in &merged {
         let id = store::upsert_title(pool, m).await?;
-        id_services.push((id, m.services.clone()));
+        id_services.push((id, m.services.clone(), m.links.clone()));
     }
 
     // Reconcile + record only the services whose client succeeded.
@@ -149,8 +151,11 @@ pub async fn run_sync(
     for svc in &unique_ok {
         let desired: Vec<(i64, Option<String>)> = id_services
             .iter()
-            .filter(|(_, services)| services.contains(svc))
-            .map(|(id, _)| (*id, None))
+            .filter(|(_, services, _)| services.contains(svc))
+            .map(|(id, _, links)| {
+                let link = links.iter().find(|(s, _)| s == svc).map(|(_, l)| l.clone());
+                (*id, link)
+            })
             .collect();
         let count = i64::try_from(desired.len()).unwrap_or(i64::MAX);
         store::reconcile_service(pool, *svc, &desired).await?;
@@ -195,6 +200,22 @@ pub async fn run_sync(
                     tracing::error!("watch-history fetch failed for {}: {e:#}", src.name());
                 }
             }
+        }
+    }
+
+    // Persist server-global metadata (e.g. Plex machineIdentifier) from each
+    // successful source. Non-fatal: a failure logs and leaves the prior value,
+    // so a stale-but-present machine id still builds working links.
+    for src in &ok_sources {
+        match src.server_meta().await {
+            Ok(pairs) => {
+                for (k, v) in pairs {
+                    if let Err(e) = crate::db::app_meta::set(pool, &k, &v).await {
+                        tracing::error!("app_meta set {k} failed: {e:#}");
+                    }
+                }
+            }
+            Err(e) => tracing::error!("server_meta fetch failed for {}: {e:#}", src.name()),
         }
     }
 
@@ -544,6 +565,111 @@ mod orchestrator_tests {
         }) as Arc<dyn CatalogueSource>;
         run_sync(&p, &[motn], None).await.unwrap();
         assert_eq!(plex_watch_count(&p).await, 1); // ttOLD untouched (wipe-guard)
+    }
+
+    /// A fake source that returns links on fetch and key/value pairs from `server_meta`.
+    struct MetaFake {
+        name: &'static str,
+        services: Vec<Service>,
+        titles: Vec<FetchedTitle>,
+        meta: anyhow::Result<Vec<(String, String)>>,
+    }
+    #[async_trait]
+    impl CatalogueSource for MetaFake {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+        fn services(&self) -> &'static [Service] {
+            Box::leak(self.services.clone().into_boxed_slice())
+        }
+        async fn fetch(&self) -> anyhow::Result<Vec<FetchedTitle>> {
+            Ok(self.titles.clone())
+        }
+        async fn server_meta(&self) -> anyhow::Result<Vec<(String, String)>> {
+            match &self.meta {
+                Ok(v) => Ok(v.clone()),
+                Err(e) => Err(anyhow::anyhow!("{e}")),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn run_sync_persists_service_link_end_to_end() {
+        let (p, _dir) = pool().await;
+        // A MOTN-like source that emits a Crunchyroll link for one title.
+        let motn = Arc::new(MetaFake {
+            name: "motn",
+            services: vec![Service::Disney, Service::Crunchyroll],
+            titles: vec![{
+                let mut t = title("ttCR", vec![Service::Crunchyroll]);
+                t.links = vec![(
+                    Service::Crunchyroll,
+                    "https://crunchyroll.com/watch/ttCR".into(),
+                )];
+                t
+            }],
+            meta: Ok(vec![]),
+        }) as Arc<dyn CatalogueSource>;
+        run_sync(&p, &[motn], None).await.unwrap();
+
+        // The link must be persisted in title_services.link for Crunchyroll.
+        let link: Option<String> = sqlx::query_scalar(
+            "SELECT ts.link FROM title_services ts
+             JOIN titles t ON t.id = ts.title_id
+             WHERE t.imdb_id = 'ttCR' AND ts.service = 'crunchyroll'",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        assert_eq!(
+            link.as_deref(),
+            Some("https://crunchyroll.com/watch/ttCR"),
+            "Crunchyroll link must be persisted after sync"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_sync_persists_server_meta_non_fatally() {
+        let (p, _dir) = pool().await;
+        // A source that returns a server_meta pair (simulates Plex machineIdentifier).
+        let src = Arc::new(MetaFake {
+            name: "plex",
+            services: vec![Service::Plex],
+            titles: vec![title("ttP2", vec![Service::Plex])],
+            meta: Ok(vec![("plex_machine_id".into(), "ABC123".into())]),
+        }) as Arc<dyn CatalogueSource>;
+        run_sync(&p, &[src], None).await.unwrap();
+
+        let val: Option<String> =
+            sqlx::query_scalar("SELECT value FROM app_meta WHERE key = 'plex_machine_id'")
+                .fetch_optional(&p)
+                .await
+                .unwrap();
+        assert_eq!(
+            val.as_deref(),
+            Some("ABC123"),
+            "server_meta pair must land in app_meta"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_sync_server_meta_error_is_non_fatal() {
+        let (p, _dir) = pool().await;
+        // A source whose server_meta() fails — sync must still return Ok.
+        let src = Arc::new(MetaFake {
+            name: "plex",
+            services: vec![Service::Plex],
+            titles: vec![title("ttP3", vec![Service::Plex])],
+            meta: Err(anyhow::anyhow!("identity endpoint down")),
+        }) as Arc<dyn CatalogueSource>;
+        // Must not propagate the server_meta error.
+        run_sync(&p, &[src], None).await.unwrap();
+        // Title still persisted — sync core was unaffected.
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM titles WHERE imdb_id = 'ttP3'")
+            .fetch_one(&p)
+            .await
+            .unwrap();
+        assert_eq!(n, 1, "title persisted despite server_meta failure");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
