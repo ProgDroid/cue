@@ -2,8 +2,10 @@
 //! score fetch. Additive and wipe-guarded — any failure retains cached scores.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use serde::Deserialize;
+use sqlx::SqlitePool;
 
 /// Maps a title's external ids to its `AniList` id, built from Fribb's
 /// `anime-list-full.json`. An id present here means the title IS anime.
@@ -145,11 +147,160 @@ pub async fn fetch_scores(
     parse_scores(&text)
 }
 
+/// Write resolved `AniList` id + score for each `(title_id, anilist_id, score)`.
+/// Returns the number of title rows updated.
+///
+/// # Errors
+/// Returns an error if a write fails.
+pub async fn persist_scores(
+    pool: &SqlitePool,
+    rows: &[(i64, i64, Option<f64>)],
+) -> anyhow::Result<u64> {
+    let mut updated = 0;
+    let mut tx = pool.begin().await?;
+    for (title_id, anilist_id, score) in rows {
+        let r = sqlx::query("UPDATE titles SET anilist_id = ?, anilist_score = ? WHERE id = ?")
+            .bind(anilist_id)
+            .bind(score)
+            .bind(title_id)
+            .execute(&mut *tx)
+            .await?;
+        updated += r.rows_affected();
+    }
+    tx.commit().await?;
+    Ok(updated)
+}
+
+/// Fribb mapping source + local cache TTL.
+const FRIBB_URL: &str =
+    "https://raw.githubusercontent.com/Fribb/anime-lists/master/anime-list-full.json";
+const MAP_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+
+async fn load_map(client: &reqwest::Client, path: &Path) -> anyhow::Result<AnimeIdMap> {
+    let fresh = std::fs::metadata(path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age.as_secs() < MAP_TTL_SECS);
+    if !fresh {
+        let body = client
+            .get(FRIBB_URL)
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?;
+        AnimeIdMap::parse(&body)?; // validate before caching
+        std::fs::write(path, &body)?;
+    }
+    AnimeIdMap::parse(&std::fs::read_to_string(path)?)
+}
+
+/// Enrich anime titles with `AniList` scores.
+///
+/// Resolves every title's external ids against the Fribb map; for matches still
+/// missing a score, batch-fetches and persists. Wipe-guarded: any failure logs
+/// and returns `Ok(0)` without clearing existing scores.
+/// Returns the number of titles scored.
+///
+/// # Errors
+/// Returns an error only if the initial titles query fails irrecoverably.
+pub async fn enrich(pool: &SqlitePool, data_dir: &Path) -> anyhow::Result<u64> {
+    if let Err(e) = std::fs::create_dir_all(data_dir) {
+        tracing::error!("anilist: cannot create data dir: {e:#}; skipping");
+        return Ok(0);
+    }
+    let client = reqwest::Client::new();
+    let map = match load_map(&client, &data_dir.join("anime-list-full.json")).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::error!("anilist: id-map load failed: {e:#}; retaining cached scores");
+            return Ok(0);
+        }
+    };
+
+    // (db_id, imdb_id, tmdb_id, existing_anilist_score)
+    #[allow(clippy::type_complexity)] // 4-tuple from a raw query; a named struct would be overkill
+    let titles: Vec<(i64, Option<String>, Option<String>, Option<f64>)> =
+        sqlx::query_as("SELECT id, imdb_id, tmdb_id, anilist_score FROM titles")
+            .fetch_all(pool)
+            .await?;
+
+    // (title_id, anilist_id) for matched anime that still need a score.
+    let mut pending: Vec<(i64, i64)> = Vec::new();
+    for (id, imdb, tmdb, existing) in titles {
+        if existing.is_some() {
+            continue; // already scored — skip (refresh is a deferred follow-up)
+        }
+        if let Some(anilist) = map.resolve(imdb.as_deref(), tmdb.as_deref()) {
+            pending.push((id, anilist));
+        }
+    }
+    if pending.is_empty() {
+        return Ok(0);
+    }
+
+    let mut scored = 0;
+    for chunk in pending.chunks(50) {
+        let ids: Vec<i64> = chunk.iter().map(|(_, a)| *a).collect();
+        let score_map = match fetch_scores(&client, &ids).await {
+            Ok(s) => s.into_iter().collect::<HashMap<i64, Option<f64>>>(),
+            Err(e) => {
+                tracing::error!("anilist: score fetch failed: {e:#}; retaining cached scores");
+                break; // keep whatever earlier chunks persisted; never wipe
+            }
+        };
+        let rows: Vec<(i64, i64, Option<f64>)> = chunk
+            .iter()
+            .map(|(title_id, anilist)| {
+                (
+                    *title_id,
+                    *anilist,
+                    score_map.get(anilist).copied().flatten(),
+                )
+            })
+            .collect();
+        scored += persist_scores(pool, &rows).await?;
+    }
+    tracing::info!("anilist: scored {scored} anime titles");
+    Ok(scored)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const SAMPLE: &str = include_str!("testdata/fribb_sample.json");
+
+    async fn pool() -> (sqlx::SqlitePool, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("t.db");
+        let url = format!("sqlite:{}", db.to_string_lossy().replace('\\', "/"));
+        (crate::db::init_pool(&url).await.unwrap(), dir)
+    }
+
+    #[tokio::test]
+    async fn persist_writes_anilist_id_and_score() {
+        let (p, _dir) = pool().await;
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO titles (imdb_id, title, year, type) VALUES ('tt1','A',2020,'movie') RETURNING id",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        let n = persist_scores(&p, &[(id, 101_759, Some(8.6))])
+            .await
+            .unwrap();
+        assert_eq!(n, 1);
+        let row: (Option<i64>, Option<f64>) =
+            sqlx::query_as("SELECT anilist_id, anilist_score FROM titles WHERE id = ?")
+                .bind(id)
+                .fetch_one(&p)
+                .await
+                .unwrap();
+        assert_eq!(row.0, Some(101_759));
+        assert!((row.1.unwrap() - 8.6).abs() < 1e-9);
+    }
 
     #[test]
     fn parses_anilist_page_scores_normalized_to_ten() {

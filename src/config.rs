@@ -64,6 +64,15 @@ impl Config {
         Ok(())
     }
 
+    /// Directory for runtime data files (Fribb cache, etc.). Parent of the
+    /// sqlite file, or `./data` for in-memory / unparsable URLs.
+    #[must_use]
+    pub fn data_dir(&self) -> PathBuf {
+        self.sqlite_path()
+            .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+            .unwrap_or_else(|| PathBuf::from("./data"))
+    }
+
     /// On-disk path of the `SQLite` file, or `None` for an in-memory database.
     #[must_use]
     pub fn sqlite_path(&self) -> Option<PathBuf> {

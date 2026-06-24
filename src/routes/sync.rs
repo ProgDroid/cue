@@ -102,7 +102,7 @@ mod tests {
     async fn status_reports_sources_and_stats() {
         let (p, _dir) = pool().await;
         sync_runs::record(&p, "plex", "ok", 3, None).await.unwrap();
-        let runner = SyncRunner::new(p.clone(), vec![], None);
+        let runner = SyncRunner::new(p.clone(), vec![], None, None);
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(p.clone()))
@@ -123,7 +123,7 @@ mod tests {
     #[actix_web::test]
     async fn trigger_starts_and_returns_202() {
         let (p, _dir) = pool().await;
-        let runner = SyncRunner::new(p.clone(), vec![], None);
+        let runner = SyncRunner::new(p.clone(), vec![], None, None);
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(runner))
