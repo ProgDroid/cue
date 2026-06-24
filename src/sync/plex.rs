@@ -26,6 +26,8 @@ struct Meta {
     thumb: Option<String>,
     art: Option<String>,
     rating: Option<f64>,
+    #[serde(rename = "audienceRating")]
+    audience_rating: Option<f64>,
     duration: Option<i64>,
     #[serde(rename = "viewCount")]
     view_count: Option<i64>,
@@ -103,7 +105,11 @@ pub fn parse_section(json: &str) -> anyhow::Result<Vec<FetchedTitle>> {
                 title: m.title,
                 year: m.year,
                 kind,
-                score: m.rating,
+                // Plex stores the IMDb/TMDB audience score in `audienceRating`;
+                // the legacy `rating` field is empty for these libraries (and is
+                // a critic score when present). Prefer audienceRating, fall back
+                // to rating only when audienceRating is absent.
+                score: m.audience_rating.or(m.rating),
                 length,
                 description: m.summary,
                 genres: m.genre.into_iter().map(|g| g.tag).collect(),
@@ -305,6 +311,34 @@ mod tests {
         let b = out[0].backdrop.as_ref().unwrap();
         assert!(!b.remote);
         assert_eq!(b.value, "/library/metadata/1/art/9");
+    }
+
+    #[test]
+    fn parse_section_reads_audience_rating_as_score() {
+        // Plex stores the IMDb/TMDB audience score in `audienceRating`; the
+        // legacy `rating` field is empty for these libraries (confirmed live:
+        // 0/193 had `rating`, all had `audienceRating`). Prefer audienceRating,
+        // fall back to `rating` only when audienceRating is absent.
+        let json = r#"{"MediaContainer":{"Metadata":[
+          {"type":"movie","title":"Alien","year":1979,"audienceRating":8.4,
+           "audienceRatingImage":"imdb://image.rating","Guid":[{"id":"imdb://tt1"}]},
+          {"type":"movie","title":"Both","year":2000,"rating":5.0,"audienceRating":7.2,
+           "Guid":[{"id":"imdb://tt2"}]},
+          {"type":"movie","title":"CriticOnly","year":2001,"rating":6.1,
+           "Guid":[{"id":"imdb://tt3"}]}
+        ]}}"#;
+        let out = parse_section(json).unwrap();
+        assert_eq!(out[0].score, Some(8.4), "audienceRating used as score");
+        assert_eq!(
+            out[1].score,
+            Some(7.2),
+            "audienceRating preferred over critic rating"
+        );
+        assert_eq!(
+            out[2].score,
+            Some(6.1),
+            "falls back to rating when audienceRating absent"
+        );
     }
 
     #[test]
