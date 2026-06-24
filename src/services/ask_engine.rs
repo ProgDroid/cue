@@ -297,7 +297,7 @@ impl AskEngine {
         .fetch_all(&self.pool)
         .await?;
         let want: HashSet<i64> = ids.iter().copied().collect();
-        for (id, title, year, kind, imdb) in rows {
+        for (id, title, year, kind, score) in rows {
             if want.contains(&id) {
                 by_id.insert(
                     id,
@@ -307,7 +307,7 @@ impl AskEngine {
                         year,
                         kind,
                         genres: Vec::new(),
-                        imdb,
+                        score,
                     },
                 );
             }
