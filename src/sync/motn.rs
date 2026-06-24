@@ -119,6 +119,8 @@ struct Show {
 #[derive(Deserialize)]
 struct StreamOption {
     service: ServiceRef,
+    #[serde(default)]
+    link: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -184,6 +186,23 @@ fn show_to_fetched(s: Show, country: &str, services: &[Service]) -> FetchedTitle
             attributed
         }
     };
+    let links: Vec<(Service, String)> = s
+        .streaming_options
+        .get(country)
+        .map(|opts| {
+            services
+                .iter()
+                .filter_map(|svc| {
+                    let id = wanted_id(*svc)?;
+                    let link = opts
+                        .iter()
+                        .find(|o| o.service.id == id)
+                        .and_then(|o| o.link.clone())?;
+                    Some((*svc, link))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let poster = s
         .image_set
         .as_ref()
@@ -206,7 +225,7 @@ fn show_to_fetched(s: Show, country: &str, services: &[Service]) -> FetchedTitle
         cast: s.cast,
         services: svcs,
         plex_rating_key: None,
-        links: vec![],
+        links,
         poster,
         backdrop,
     }
@@ -588,6 +607,26 @@ mod tests {
             vec![Service::Crunchyroll],
             "crunchyroll title (also a Prime addon) tagged crunchyroll only, not both"
         );
+    }
+
+    #[test]
+    fn parses_streaming_link_per_service() {
+        let json = include_str!("../../tests/fixtures/motn_search_page1.json");
+        let (titles, _) = parse_page(json, "gb", &[Service::Crunchyroll, Service::Disney]).unwrap();
+        let with_link = titles
+            .iter()
+            .find(|t| t.links.iter().any(|(s, _)| *s == Service::Crunchyroll));
+        assert!(
+            with_link.is_some(),
+            "a crunchyroll link should be attributed"
+        );
+        let (_, url) = with_link
+            .unwrap()
+            .links
+            .iter()
+            .find(|(s, _)| *s == Service::Crunchyroll)
+            .unwrap();
+        assert!(url.contains("crunchyroll.com"));
     }
 
     #[test]
