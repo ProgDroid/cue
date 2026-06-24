@@ -50,6 +50,7 @@ All configuration is via environment variables. For Docker, put them in `.env`
 | `MOTN_API_KEY` | optional | — | Movie-of-the-Night (Streaming Availability) sync. Unset → that source is skipped. |
 | `PLEX_URL` | optional | — | Base URL of your Plex server (e.g. `http://10.0.0.5:32400`). |
 | `PLEX_TOKEN` | optional | — | Plex auth token. `PLEX_URL` + `PLEX_TOKEN` together enable the Plex source. |
+| `PLEX_WEB_URL` | optional | `PLEX_URL` | Browser-facing Plex base URL for the **"Watch on Plex"** detail links. Set only when the browser can't reach `PLEX_URL` directly (e.g. `PLEX_URL` is a Docker-internal host); otherwise it defaults to `PLEX_URL`. |
 | `REGION` | optional | `gb` | ISO-3166 alpha-2 country for Movie-of-the-Night (e.g. `gb`, `us`). |
 | `SYNC_CRON` | optional | `0 0 3 * * *` | **6-field** cron (`sec min hour dom mon dow`) for the scheduled sync. Validated at startup. |
 
