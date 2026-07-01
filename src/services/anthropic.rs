@@ -1,8 +1,10 @@
 //! Claude ranking client behind the `AskModel` trait so tests run offline.
 
+use std::env;
+
 use async_trait::async_trait;
 
-pub const ASK_MODEL: &str = "claude-sonnet-4-6";
+pub const ASK_MODEL: &str = "claude-sonnet-5";
 const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
@@ -102,14 +104,20 @@ fn prompt(query: &str, candidates: &[Candidate]) -> String {
 pub struct ClaudeAskModel {
     client: reqwest::Client,
     api_key: String,
+    model: String,
 }
 
 impl ClaudeAskModel {
     #[must_use]
     pub fn new(api_key: String) -> Self {
+        let model = env::var("ASK_MODEL")
+            .ok()
+            .unwrap_or_else(|| ASK_MODEL.to_string());
+
         Self {
             client: reqwest::Client::new(),
             api_key,
+            model,
         }
     }
 }
@@ -118,7 +126,7 @@ impl ClaudeAskModel {
 impl AskModel for ClaudeAskModel {
     async fn rank(&self, query: &str, candidates: &[Candidate]) -> anyhow::Result<AskAnswer> {
         let body = serde_json::json!({
-            "model": ASK_MODEL,
+            "model": &self.model,
             "max_tokens": 1024,
             "thinking": { "type": "disabled" },
             "output_config": {

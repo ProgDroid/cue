@@ -14,6 +14,7 @@ services:
       DATABASE_URL: sqlite:/data/cue.db
       STATIC_DIR: /app/frontend/dist
       RUST_LOG: info,sqlx=warn
+      # ASK_MODEL: claude-sonnet-5 # Uncomment to change Claude model for ranking.
     # Host side: publishing on 127.0.0.1 keeps the app reachable only from the
     # server itself (preserves the single-user/localhost posture, D7) — use this
     # behind a reverse proxy on the same host. To reach it directly from another

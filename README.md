@@ -53,6 +53,7 @@ All configuration is via environment variables. For Docker, put them in `.env`
 | `PLEX_WEB_URL` | optional | `PLEX_URL` | Browser-facing Plex base URL for the **"Watch on Plex"** detail links. Set only when the browser can't reach `PLEX_URL` directly (e.g. `PLEX_URL` is a Docker-internal host); otherwise it defaults to `PLEX_URL`. |
 | `REGION` | optional | `gb` | ISO-3166 alpha-2 country for Movie-of-the-Night (e.g. `gb`, `us`). |
 | `SYNC_CRON` | optional | `0 0 3 * * *` | **6-field** cron (`sec min hour dom mon dow`) for the scheduled sync. Validated at startup. |
+| `ASK_MODEL` | optional | `claude-sonnet-5` | Claude model to use for ranking. |
 
 All keys are **server-side only** and are never serialized to the client. Missing
 keys degrade gracefully (the relevant feature is disabled with a log line) rather
