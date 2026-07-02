@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeWindow } from '@/composables/computeWindow'
+import { computeWindow, estimateRowHeight } from '@/composables/computeWindow'
 
 const base = { containerWidth: 800, rowHeight: 172, scrollOffset: 0, viewportH: 400, itemCount: 100, overscanRows: 3 }
 
@@ -9,12 +9,24 @@ describe('computeWindow', () => {
     expect(computeWindow(base).cols).toBe(4)
   })
 
-  it('renders everything (spacers 0) before rowHeight is measured', () => {
+  it('windows to a bounded set (not the whole list) before rowHeight is measured', () => {
+    // rowHeight 0 but width known -> uses estimateRowHeight, so we render a
+    // small window instead of all 100 items. Regression guard for the OOM bug.
     const w = computeWindow({ ...base, rowHeight: 0 })
     expect(w.startIndex).toBe(0)
-    expect(w.endIndex).toBe(100)
+    expect(w.endIndex).toBeGreaterThan(0)
+    expect(w.endIndex).toBeLessThan(base.itemCount)
     expect(w.topSpacer).toBe(0)
-    expect(w.bottomSpacer).toBe(0)
+  })
+
+  it('renders only a tiny first window when both width and height are unknown', () => {
+    const w = computeWindow({ ...base, rowHeight: 0, containerWidth: 0 })
+    expect(w.endIndex).toBeLessThan(base.itemCount)
+  })
+
+  it('estimateRowHeight returns a positive height for a known width, 0 for unknown', () => {
+    expect(estimateRowHeight(800, 4)).toBeGreaterThan(0)
+    expect(estimateRowHeight(0, 1)).toBe(0)
   })
 
   it('windows to the visible rows + overscan at the top', () => {
