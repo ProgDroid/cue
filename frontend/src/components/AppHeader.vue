@@ -34,14 +34,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, watch } from 'vue'
 import { useCatalogueStore } from '@/stores/catalogue'
+import { debounce } from '@/composables/debounce'
 
 const store = useCatalogueStore()
-const query = computed({
-  get: () => store.query,
-  set: (v: string) => store.setQuery(v),
-})
+
+// Local echo so the input stays instant; the store (and the 5k re-filter it
+// drives) is updated on a debounce.
+const query = ref(store.query)
+const pushQuery = debounce((v: string) => store.setQuery(v), 120)
+watch(query, (v) => pushQuery(v))
+
+// Keep the box in sync if the query is reset elsewhere.
+watch(() => store.query, (v) => { if (v !== query.value) query.value = v })
 </script>
 
 <style scoped>

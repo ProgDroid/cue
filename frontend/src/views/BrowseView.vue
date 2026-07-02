@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useCatalogueStore } from '@/stores/catalogue'
+import { useDelayedFlag } from '@/composables/useDelayedFlag'
 import AskBar from '@/components/AskBar.vue'
 import ThreadBreadcrumb from '@/components/ThreadBreadcrumb.vue'
 import FilterBar from '@/components/FilterBar.vue'
@@ -10,6 +11,7 @@ import AnswerContext from '@/components/AnswerContext.vue'
 import ShimmerGrid from '@/components/ShimmerGrid.vue'
 
 const store = useCatalogueStore()
+const showLoader = useDelayedFlag(() => store.status === 'loading', 180)
 const router = useRouter()
 
 function onKey(e: KeyboardEvent) {
@@ -45,7 +47,7 @@ const emptyCopy = computed(() =>
 
     <FilterBar />
 
-    <ShimmerGrid v-if="store.resolving" />
+    <ShimmerGrid v-if="store.resolving || showLoader" data-test="shimmer" />
     <template v-else>
       <AnswerContext v-if="store.answerActive" />
 
@@ -56,7 +58,11 @@ const emptyCopy = computed(() =>
         @find-similar="store.moreLike"
       />
 
-      <div v-else class="empty-state">
+      <div v-else-if="store.status === 'error'" class="empty-state" data-test="load-error">
+        {{ store.error }} — <button class="retry-btn" @click="store.load()">Retry</button>
+      </div>
+
+      <div v-else-if="store.status === 'ready'" class="empty-state">
         {{ emptyCopy }}
       </div>
     </template>
@@ -82,5 +88,15 @@ const emptyCopy = computed(() =>
   font-family: var(--font-ui, 'Hanken Grotesk', system-ui, sans-serif);
   font-size: var(--t-base, 13.5px);
   color: var(--text-faint, #5f6570);
+}
+
+.retry-btn {
+  background: none;
+  border: none;
+  color: var(--accent-text, #f5d24e);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  padding: 0;
 }
 </style>

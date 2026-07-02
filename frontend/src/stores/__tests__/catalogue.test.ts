@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
+import { isReactive } from 'vue'
 import { useCatalogueStore } from '../catalogue'
 import type { Title } from '@/types'
 
@@ -60,5 +61,21 @@ describe('catalogue store', () => {
     const s = useCatalogueStore()
     s.catalogue = fixtures
     expect(s.genres).toEqual(['Adventure', 'Animation', 'Horror', 'Musical'])
+  })
+
+  it('load() stores the catalogue non-reactively (markRaw)', async () => {
+    const s = useCatalogueStore()
+    vi.spyOn(await import('@/api/client'), 'getCatalogue').mockResolvedValue(fixtures)
+    await s.load()
+    expect(isReactive(s.catalogue)).toBe(false)
+  })
+
+  it('load() still seeds watched/ratings from title fields after markRaw', async () => {
+    const seeded = [t({ id: 5, imdbId: 'tt5', watched: true, rating: 7 })]
+    const s = useCatalogueStore()
+    vi.spyOn(await import('@/api/client'), 'getCatalogue').mockResolvedValue(seeded)
+    await s.load()
+    expect(s.watched[5]).toBe(true)
+    expect(s.ratings[5]).toBe(7)
   })
 })

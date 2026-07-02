@@ -314,3 +314,26 @@ non-blocking follow-ups surfaced during the review:
   → `…_persists_server_meta` (the Err test is the real non-fatal guard); add an
   exclusion assertion to the `watchable` test; `color-mix` in WatchLinks.vue needs
   Baseline-2023 browsers (acceptable for self-hosted).
+
+## Catalogue performance + loading UX (branch `feat/catalogue-performance`, 2026-07-02)
+
+Merged the catalogue-page perf fixes (estimate-based virtualization window,
+`markRaw` catalogue, `useDelayedFlag` load shimmer, debounced search). Final
+whole-branch review: READY TO MERGE, no Critical/Major. Deferred items:
+
+- **Operator measurement checkpoint (the spec's "measure" gate).** The seed DB
+  has only 28 titles, so the freeze/OOM fix can only be verified against a real
+  ~5k-title library in a browser. Record time-to-interactive, peak tab memory
+  during a full scroll-through, and scroll smoothness here. Only if still
+  inadequate do we revisit server-side pagination (which would then also need a
+  "hydrate titles by ids" endpoint so Ask results can render).
+- **M3 (Minor): AppHeader debounce timer not cleared on unmount.** A pending
+  `setTimeout` can fire `store.setQuery` after unmount. Harmless today (the
+  header is a persistent shell component and the Pinia store outlives it); add an
+  `onUnmounted` clear for tidiness if the file is touched.
+- **M1 (Minor): `firstWindow` naming in `computeWindow.ts`** — holds a count but
+  is assigned to `endIndex`; rename to `firstWindowEnd`/`windowSize` opportunistically.
+- **M2 (Minor): `useDelayedFlag` getter-arg path has no dedicated unit test** —
+  covered transitively via BrowseView; add a direct case opportunistically.
+- **Pre-existing (not a regression): one-frame `--cols:1` cold flash** before the
+  first width measurement. Deferred previously; unchanged by this branch.

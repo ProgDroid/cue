@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { markRaw } from 'vue'
 import type { ServiceKey, Title, TitleKind, ThreadStep, AskResult } from '@/types'
 import { getCatalogue } from '@/api/client'
 import { askService } from '@/services'
@@ -149,7 +150,7 @@ export const useCatalogueStore = defineStore('catalogue', {
       this.status = 'loading'
       this.error = null
       try {
-        this.catalogue = await getCatalogue()
+        this.catalogue = markRaw(await getCatalogue())
         for (const t of this.catalogue) {
           if (t.watched) this.watched[t.id] = true
           if (t.rating != null) this.ratings[t.id] = t.rating
