@@ -1,5 +1,5 @@
 import { mount, flushPromises } from '@vue/test-utils'
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import BrowseView from '../BrowseView.vue'
@@ -13,6 +13,7 @@ const routes = [
 ]
 
 beforeEach(() => setActivePinia(createPinia()))
+afterEach(() => { vi.useRealTimers() })
 
 function makeRouter() { return createRouter({ history: createMemoryHistory(), routes }) }
 
@@ -49,7 +50,6 @@ describe('BrowseView', () => {
     await w.vm.$nextTick()
     expect(w.find('[data-test="shimmer"]').exists() || w.findComponent(ShimmerGrid).exists()).toBe(true)
     expect(w.find('.empty-state').exists()).toBe(false)
-    vi.useRealTimers()
   })
 
   it('shows the empty-state only when ready with no matches', async () => {
@@ -60,5 +60,17 @@ describe('BrowseView', () => {
     const w = mount(BrowseView, { global: { plugins: [router] } })
     await w.vm.$nextTick()
     expect(w.find('.empty-state').exists()).toBe(true)
+  })
+
+  it('shows load-error sentinel and hides ready empty-state in error state', async () => {
+    const s = useCatalogueStore()
+    s.status = 'error'
+    s.error = 'boom'
+    s.catalogue = []
+    const router = makeRouter(); router.push('/'); await router.isReady()
+    const w = mount(BrowseView, { global: { plugins: [router] } })
+    await w.vm.$nextTick()
+    expect(w.find('[data-test="load-error"]').exists()).toBe(true)
+    expect(w.find('.empty-state:not([data-test="load-error"])').exists()).toBe(false)
   })
 })
