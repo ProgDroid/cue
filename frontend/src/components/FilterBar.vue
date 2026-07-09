@@ -95,7 +95,7 @@ const resultCount = computed(() => `${store.visibleTitles.length} titles`)
 
     <!-- Genre select -->
     <div class="select-wrap">
-      <select v-model="selectedGenre" data-test="genre-select" class="filter-select">
+      <select v-model="selectedGenre" data-test="genre-select" class="filter-select" aria-label="Filter by genre">
         <option v-for="opt in genreOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
       </select>
       <span class="select-arrow" aria-hidden="true">&#9660;</span>
@@ -103,7 +103,7 @@ const resultCount = computed(() => `${store.visibleTitles.length} titles`)
 
     <!-- Sort select -->
     <div class="select-wrap">
-      <select v-model="selectedSort" data-test="sort-select" class="filter-select">
+      <select v-model="selectedSort" data-test="sort-select" class="filter-select" aria-label="Sort by">
         <option v-for="opt in sortOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
       </select>
       <span class="select-arrow" aria-hidden="true">&#9660;</span>
@@ -111,7 +111,7 @@ const resultCount = computed(() => `${store.visibleTitles.length} titles`)
 
     <!-- Rating threshold select -->
     <div class="select-wrap">
-      <select v-model="selectedRating" data-test="rating-select" class="filter-select">
+      <select v-model="selectedRating" data-test="rating-select" class="filter-select" aria-label="Filter by minimum rating">
         <option v-for="opt in ratingOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
       </select>
       <span class="select-arrow" aria-hidden="true">&#9660;</span>
