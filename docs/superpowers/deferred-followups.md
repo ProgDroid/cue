@@ -337,3 +337,20 @@ whole-branch review: READY TO MERGE, no Critical/Major. Deferred items:
   covered transitively via BrowseView; add a direct case opportunistically.
 - **Pre-existing (not a regression): one-frame `--cols:1` cold flash** before the
   first width measurement. Deferred previously; unchanged by this branch.
+
+## Rating filter (2026-07-09, branch feat/rating-filter)
+
+- **Sort/filter scale divergence** — the catalogue `visibleTitles` "Top rated"
+  sort (`byRating`, `src/stores/catalogue.ts`) still keys off raw `t.score`
+  (`?? -Infinity`), while the new rating FILTER uses the normalised
+  `externalRating()` (`score`, else `anilistScore / 10`). Consequence: an
+  anime with only `anilistScore` (e.g. 8.5) passes an `8+` filter but sinks to
+  the bottom under "Top rated" (its `score` is null → -Infinity), ranked below
+  a score-6.0 movie. One-line fix: switch `byRating` to
+  `externalRating(b) ?? -Infinity` (non-anime behaviour unchanged). Deferred
+  out of the rating-filter branch to keep it tightly scoped; low-risk
+  consistency follow-up. Flagged by both the Task 1 review and the final
+  whole-branch review.
+- **Missing `aria-label` on filter selects** — the Genre, Sort, and new Rating
+  `<select>`s in `FilterBar.vue` have no `aria-label`. Pre-existing pattern;
+  candidate for a single batch a11y pass across all three.

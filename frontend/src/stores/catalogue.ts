@@ -5,6 +5,13 @@ import { getCatalogue } from '@/api/client'
 import { askService } from '@/services'
 import { setRating as apiSetRating, clearRating as apiClearRating, setWatched as apiSetWatched } from '@/api/userData'
 
+/** Unified best-available external rating on a 0–10 scale, or null if none. */
+export function externalRating(t: Title): number | null {
+  if (t.score != null) return t.score
+  if (t.anilistScore != null) return t.anilistScore / 10
+  return null
+}
+
 type Status = 'idle' | 'loading' | 'ready' | 'error'
 type ServiceFilter = 'all' | ServiceKey
 type TypeFilter = 'all' | TitleKind
@@ -19,6 +26,7 @@ interface State {
   type: TypeFilter
   genre: 'all' | string
   sort: SortKey
+  minRating: number
   watched: Record<number, boolean>
   ratings: Record<number, number>
   answerActive: boolean
@@ -41,6 +49,7 @@ export const useCatalogueStore = defineStore('catalogue', {
     type: 'all',
     genre: 'all',
     sort: 'trending',
+    minRating: 0,
     watched: {},
     ratings: {},
     answerActive: false,
@@ -86,6 +95,11 @@ export const useCatalogueStore = defineStore('catalogue', {
       if (state.service !== 'all') out = out.filter(t => t.services.includes(state.service as ServiceKey))
       if (state.type !== 'all') out = out.filter(t => t.type === state.type)
       if (state.genre !== 'all') out = out.filter(t => t.genres.includes(state.genre))
+      if (state.minRating > 0)
+        out = out.filter(t => {
+          const r = externalRating(t)
+          return r != null && r >= state.minRating
+        })
 
       const byRating = (a: Title, b: Title) =>
         (b.score ?? -Infinity) - (a.score ?? -Infinity)
@@ -105,6 +119,7 @@ export const useCatalogueStore = defineStore('catalogue', {
     setType(v: TypeFilter) { this.type = v },
     setGenre(v: 'all' | string) { this.genre = v },
     setSort(v: SortKey) { this.sort = v },
+    setMinRating(n: number) { this.minRating = n },
 
     async toggleWatched(id: number) {
       this.userDataError = null
