@@ -31,6 +31,15 @@ const sortOptions = [
   { value: 'az' as const, label: 'A–Z' },
 ]
 
+// Rating threshold options (value 0 = no filter)
+const ratingOptions = [
+  { value: 0, label: 'Any rating' },
+  { value: 6, label: '6+' },
+  { value: 7, label: '7+' },
+  { value: 8, label: '8+' },
+  { value: 9, label: '9+' },
+]
+
 // Genre options derived from store
 const genreOptions = computed(() => [
   { value: 'all', label: 'All genres' },
@@ -45,6 +54,10 @@ const selectedGenre = computed({
 const selectedSort = computed({
   get: () => store.sort,
   set: (v: 'trending' | 'rating' | 'year' | 'az') => store.setSort(v),
+})
+const selectedRating = computed({
+  get: () => store.minRating,
+  set: (v: number) => store.setMinRating(Number(v)),
 })
 
 // Result count
@@ -92,6 +105,14 @@ const resultCount = computed(() => `${store.visibleTitles.length} titles`)
     <div class="select-wrap">
       <select v-model="selectedSort" data-test="sort-select" class="filter-select">
         <option v-for="opt in sortOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+      </select>
+      <span class="select-arrow" aria-hidden="true">&#9660;</span>
+    </div>
+
+    <!-- Rating threshold select -->
+    <div class="select-wrap">
+      <select v-model="selectedRating" data-test="rating-select" class="filter-select">
+        <option v-for="opt in ratingOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
       </select>
       <span class="select-arrow" aria-hidden="true">&#9660;</span>
     </div>

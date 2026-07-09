@@ -40,4 +40,17 @@ describe('FilterBar', () => {
     const w = mount(FilterBar)
     expect(w.get('[data-test="count"]').text()).toMatch(/2 titles/)
   })
+
+  it('renders the rating threshold options', () => {
+    const w = mount(FilterBar)
+    const opts = w.get('[data-test="rating-select"]').findAll('option').map(o => o.text())
+    expect(opts).toEqual(['Any rating', '6+', '7+', '8+', '9+'])
+  })
+
+  it('selecting 8+ sets store.minRating to 8', async () => {
+    const w = mount(FilterBar)
+    const s = useCatalogueStore()
+    await w.get('[data-test="rating-select"]').setValue('8')
+    expect(s.minRating).toBe(8)
+  })
 })
