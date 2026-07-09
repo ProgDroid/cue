@@ -57,6 +57,16 @@ describe('catalogue store', () => {
     expect(s.visibleTitles.map(x => x.id).at(-1)).toBe(4) // null imdb last
   })
 
+  it('sort=rating ranks an AniList-only title by its normalised score, not last', () => {
+    const s = useCatalogueStore()
+    s.catalogue = [
+      t({ id: 1, title: 'Movie6', score: 6.0, anilistScore: null }),
+      t({ id: 2, title: 'AnimeAL90', score: null, anilistScore: 90 }), // → 9.0
+    ]
+    s.setSort('rating')
+    expect(s.visibleTitles.map(x => x.id)).toEqual([2, 1]) // 9.0 before 6.0
+  })
+
   it('genres getter returns unique sorted genres', () => {
     const s = useCatalogueStore()
     s.catalogue = fixtures

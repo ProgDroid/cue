@@ -102,7 +102,7 @@ export const useCatalogueStore = defineStore('catalogue', {
         })
 
       const byRating = (a: Title, b: Title) =>
-        (b.score ?? -Infinity) - (a.score ?? -Infinity)
+        (externalRating(b) ?? -Infinity) - (externalRating(a) ?? -Infinity)
       switch (state.sort) {
         case 'az': out.sort((a, b) => a.title.localeCompare(b.title)); break
         case 'year': out.sort((a, b) => b.year - a.year); break

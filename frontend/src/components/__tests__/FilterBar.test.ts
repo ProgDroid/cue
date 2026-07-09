@@ -53,4 +53,11 @@ describe('FilterBar', () => {
     await w.get('[data-test="rating-select"]').setValue('8')
     expect(s.minRating).toBe(8)
   })
+
+  it('each filter select has an aria-label', () => {
+    const w = mount(FilterBar)
+    expect(w.get('[data-test="genre-select"]').attributes('aria-label')).toBe('Filter by genre')
+    expect(w.get('[data-test="sort-select"]').attributes('aria-label')).toBe('Sort by')
+    expect(w.get('[data-test="rating-select"]').attributes('aria-label')).toBe('Filter by minimum rating')
+  })
 })

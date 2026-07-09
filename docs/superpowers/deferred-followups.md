@@ -340,17 +340,17 @@ whole-branch review: READY TO MERGE, no Critical/Major. Deferred items:
 
 ## Rating filter (2026-07-09, branch feat/rating-filter)
 
-- **Sort/filter scale divergence** — the catalogue `visibleTitles` "Top rated"
-  sort (`byRating`, `src/stores/catalogue.ts`) still keys off raw `t.score`
-  (`?? -Infinity`), while the new rating FILTER uses the normalised
-  `externalRating()` (`score`, else `anilistScore / 10`). Consequence: an
-  anime with only `anilistScore` (e.g. 8.5) passes an `8+` filter but sinks to
-  the bottom under "Top rated" (its `score` is null → -Infinity), ranked below
-  a score-6.0 movie. One-line fix: switch `byRating` to
-  `externalRating(b) ?? -Infinity` (non-anime behaviour unchanged). Deferred
-  out of the rating-filter branch to keep it tightly scoped; low-risk
-  consistency follow-up. Flagged by both the Task 1 review and the final
-  whole-branch review.
-- **Missing `aria-label` on filter selects** — the Genre, Sort, and new Rating
-  `<select>`s in `FilterBar.vue` have no `aria-label`. Pre-existing pattern;
-  candidate for a single batch a11y pass across all three.
+- ✅ **DONE (2026-07-09, branch `fix/rating-filter-minors`, commit `e6cc2f0`).**
+  **Sort/filter scale divergence** — the catalogue `visibleTitles` "Top rated"
+  sort (`byRating`, `src/stores/catalogue.ts`) keyed off raw `t.score`
+  (`?? -Infinity`), while the rating FILTER uses the normalised
+  `externalRating()` (`score`, else `anilistScore / 10`). An anime with only
+  `anilistScore` (e.g. 8.5) passed an `8+` filter but sank to the bottom under
+  "Top rated". Fixed: `byRating` now uses
+  `externalRating(b) ?? -Infinity` (non-anime behaviour unchanged), covered by
+  a store test (`sort=rating ranks an AniList-only title by its normalised
+  score, not last`).
+- ✅ **DONE (2026-07-09, same commit).** **Missing `aria-label` on filter
+  selects** — the Genre, Sort, and Rating `<select>`s in `FilterBar.vue` now
+  have `aria-label`s (`Filter by genre` / `Sort by` / `Filter by minimum
+  rating`), covered by a FilterBar test.
