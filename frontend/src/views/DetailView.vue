@@ -3,7 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCatalogueStore } from '@/stores/catalogue'
 import { getTitle, NotFoundError } from '@/api/client'
-import type { TitleDetail } from '@/types'
+import { askService } from '@/services'
+import type { Title, TitleDetail } from '@/types'
 import ServicePill from '@/components/ServicePill.vue'
 import StarRating from '@/components/StarRating.vue'
 import WatchLinks from '@/components/WatchLinks.vue'
@@ -26,6 +27,7 @@ async function loadDetail(tid: number) {
   loadError.value = null
   try {
     detail.value = await getTitle(tid)
+    loadSimilar(detail.value)
   } catch (e) {
     loadError.value = e instanceof NotFoundError ? 'notfound' : 'transient'
   } finally {
@@ -44,7 +46,32 @@ const factLine = computed(() => {
   return `${detail.value.year} · ${kind} · ${detail.value.len} · ${detail.value.genres.join(', ')}`
 })
 
-const similar = computed(() => detail.value ? store.similar(id.value) : [])
+// Similar strip: server ranking (embedding cosine, genre-overlap fallback) via
+// /api/ask/similar. `undefined` = in flight (render nothing, avoids a flash of
+// the local list); `null` = request failed, use the local genre ranking.
+const similarIds = ref<number[] | null | undefined>(undefined)
+let similarSeq = 0
+
+async function loadSimilar(anchor: Title) {
+  const seq = ++similarSeq
+  similarIds.value = undefined
+  try {
+    const { ids } = await askService.similar(anchor, store.catalogue)
+    if (seq === similarSeq) similarIds.value = ids
+  } catch {
+    if (seq === similarSeq) similarIds.value = null
+  }
+}
+
+const similar = computed((): Title[] => {
+  if (!detail.value || similarIds.value === undefined) return []
+  if (similarIds.value === null) return store.similar(id.value)
+  const byId = new Map(store.catalogue.map((t) => [t.id, t]))
+  return similarIds.value
+    .map((sid) => byId.get(sid))
+    .filter((t): t is Title => t !== undefined)
+    .slice(0, 5)
+})
 // Precompute placeholder + monogram once per similar title (the template would
 // otherwise call posterPlaceholder() three times per card on every render).
 const simCards = computed(() =>
