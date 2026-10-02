@@ -139,6 +139,21 @@ pub async fn upsert(pool: &SqlitePool, show_id: &str, t: &CachedTitle) -> anyhow
     Ok(())
 }
 
+/// One cached title by `show_id`, if present.
+///
+/// # Errors
+/// Returns an error if the query or payload deserialization fails.
+pub async fn get(pool: &SqlitePool, show_id: &str) -> anyhow::Result<Option<CachedTitle>> {
+    let payload: Option<String> =
+        sqlx::query_scalar("SELECT payload FROM motn_catalog_cache WHERE show_id = ?")
+            .bind(show_id)
+            .fetch_optional(pool)
+            .await?;
+    payload
+        .map(|p| serde_json::from_str(&p).map_err(Into::into))
+        .transpose()
+}
+
 /// Delete one cached title by `show_id` (no-op if absent).
 ///
 /// # Errors

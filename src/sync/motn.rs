@@ -87,9 +87,12 @@ struct ChangeEntry {
     #[serde(default)]
     item_type: Option<String>,
     show_id: String,
+    /// The service catalog this change applies to (changes are per service).
+    #[serde(default)]
+    service: Option<ServiceRef>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct Show {
     #[serde(default)]
@@ -116,24 +119,24 @@ struct Show {
     image_set: Option<ImageSet>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct StreamOption {
     service: ServiceRef,
     #[serde(default)]
     link: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct ServiceRef {
     id: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct Named {
     name: String,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ImageSet {
     #[serde(default)]
@@ -155,6 +158,21 @@ fn pick_size(m: &HashMap<String, String>, prefer: &[&str]) -> Option<ImageRef> {
     })
 }
 
+/// The wanted services `s` currently lists in `streamingOptions[country]`, with
+/// no fallback (empty when it is on none of them).
+fn attributed_services(s: &Show, country: &str, services: &[Service]) -> Vec<Service> {
+    let available: HashSet<&str> = s
+        .streaming_options
+        .get(country)
+        .map(|opts| opts.iter().map(|o| o.service.id.as_str()).collect())
+        .unwrap_or_default();
+    services
+        .iter()
+        .copied()
+        .filter(|svc| wanted_id(*svc).is_some_and(|id| available.contains(id)))
+        .collect()
+}
+
 /// Map one MOTN show into a `FetchedTitle`, attributing only the wanted services
 /// its per-country `streamingOptions` actually lists (falling back to the searched
 /// set when availability is missing). Shared by the seed and `/changes` paths.
@@ -170,16 +188,7 @@ fn show_to_fetched(s: Show, country: &str, services: &[Service]) -> FetchedTitle
         TitleKind::Series => s.episode_count.map(|e| format!("{e} eps")),
     };
     let svcs = {
-        let available: HashSet<&str> = s
-            .streaming_options
-            .get(country)
-            .map(|opts| opts.iter().map(|o| o.service.id.as_str()).collect())
-            .unwrap_or_default();
-        let attributed: Vec<Service> = services
-            .iter()
-            .copied()
-            .filter(|svc| wanted_id(*svc).is_some_and(|id| available.contains(id)))
-            .collect();
+        let attributed = attributed_services(&s, country, services);
         if attributed.is_empty() {
             services.to_vec()
         } else {
@@ -278,21 +287,30 @@ pub fn parse_page_entries(
 pub struct ParsedChanges {
     pub additions: Vec<(String, CachedTitle)>, // (show_id, title)
     pub removals: Vec<String>,                 // show_ids
+    /// `(show_id, service)`: a `removed` change with no embedded detail — drop
+    /// just that service from the cached show (delete it if none remain).
+    pub service_removals: Vec<(String, Service)>,
 }
 
 impl ParsedChanges {
     fn merge(&mut self, mut other: Self) {
         self.additions.append(&mut other.additions);
         self.removals.append(&mut other.removals);
+        self.service_removals.append(&mut other.service_removals);
     }
 }
 
 /// Parse one `/changes` page into `(ParsedChanges, next_cursor)`.
 ///
-/// `new` changes are turned into cache upserts using the embedded `shows` detail;
-/// a `new` change whose show is missing from `shows` or lacks an `imdbId` is
-/// skipped with a warning rather than aborting the sync. `removed` changes need
-/// only the `showId`. Non-show item types are ignored.
+/// Changes are per service, and the embedded `shows` detail is the show's
+/// *current* state. So every `new`/`removed` change refreshes the show from that
+/// detail: still on a wanted service → cache upsert (attributed to the services
+/// it is on now); on none → removal. This keeps a show that left one service but
+/// remains on the other, and drops one added then removed within the window.
+/// Without detail, `new` is skipped with a warning and `removed` drops only the
+/// change's service (or the whole show if the service is unknown). A show with
+/// no `imdbId` is not cached by a `new`; a `removed` falls back to dropping the
+/// service. Non-show item types are ignored.
 ///
 /// # Errors
 /// Returns an error only if the page JSON itself does not parse.
@@ -301,29 +319,46 @@ pub fn parse_changes(
     country: &str,
     services: &[Service],
 ) -> anyhow::Result<(ParsedChanges, Option<String>)> {
-    let mut page: ChangesPage = serde_json::from_str(json)?;
+    let page: ChangesPage = serde_json::from_str(json)?;
     let mut out = ParsedChanges::default();
     for ch in &page.changes {
         if ch.item_type.as_deref().is_some_and(|t| t != "show") {
             continue;
         }
-        match ch.change_type.as_str() {
-            "new" => {
-                let Some(show) = page.shows.remove(&ch.show_id) else {
-                    tracing::warn!("MOTN /changes 'new' {} missing show detail", ch.show_id);
-                    continue;
-                };
-                let ft = show_to_fetched(show, country, services);
-                if ft.imdb_id.is_none() {
-                    tracing::warn!("MOTN /changes 'new' {} has no imdbId; skipping", ch.show_id);
-                    continue;
-                }
-                out.additions
-                    .push((ch.show_id.clone(), CachedTitle::from(&ft)));
+        let removed = match ch.change_type.as_str() {
+            "new" => false,
+            "removed" => true,
+            _ => continue,
+        };
+        let id = ch.show_id.clone();
+        let drop_service =
+            |out: &mut ParsedChanges| match ch.service.as_ref().and_then(|s| service_for_id(&s.id))
+            {
+                Some(svc) => out.service_removals.push((id.clone(), svc)),
+                None => out.removals.push(id.clone()),
+            };
+        let Some(show) = page.shows.get(&ch.show_id) else {
+            if removed {
+                drop_service(&mut out);
+            } else {
+                tracing::warn!("MOTN /changes 'new' {} missing show detail", ch.show_id);
             }
-            "removed" => out.removals.push(ch.show_id.clone()),
-            _ => {}
+            continue;
+        };
+        if attributed_services(show, country, services).is_empty() {
+            out.removals.push(id);
+            continue;
         }
+        let ft = show_to_fetched(show.clone(), country, services);
+        if ft.imdb_id.is_none() {
+            if removed {
+                drop_service(&mut out);
+            } else {
+                tracing::warn!("MOTN /changes 'new' {} has no imdbId; skipping", ch.show_id);
+            }
+            continue;
+        }
+        out.additions.push((id, CachedTitle::from(&ft)));
     }
     let cursor = if page.has_more {
         page.next_cursor
@@ -363,7 +398,8 @@ async fn decide_mode(pool: &SqlitePool) -> anyhow::Result<SyncMode> {
     })
 }
 
-/// Apply parsed `/changes` to the cache: upsert additions, delete removals.
+/// Apply parsed `/changes` to the cache: upsert additions, delete removals, and
+/// drop single services from cached shows (deleting any left with none).
 ///
 /// # Errors
 /// Returns an error if any cache write fails.
@@ -374,7 +410,24 @@ async fn apply_changes(pool: &SqlitePool, parsed: &ParsedChanges) -> anyhow::Res
     for show_id in &parsed.removals {
         motn_cache::delete(pool, show_id).await?;
     }
+    for (show_id, svc) in &parsed.service_removals {
+        let Some(mut ct) = motn_cache::get(pool, show_id).await? else {
+            continue;
+        };
+        ct.services.retain(|s| s != svc.as_str());
+        ct.links.retain(|(s, _)| s != svc.as_str());
+        if ct.services.is_empty() {
+            motn_cache::delete(pool, show_id).await?;
+        } else {
+            motn_cache::upsert(pool, show_id, &ct).await?;
+        }
+    }
     Ok(())
+}
+
+/// The wanted service for a MOTN catalog id (`"disney"` → `Disney`, etc.).
+fn service_for_id(id: &str) -> Option<Service> {
+    WANTED.iter().find(|(_, w)| *w == id).map(|(s, _)| *s)
 }
 
 /// The MOTN catalog id for a wanted service (`Disney` → "disney", etc.).
@@ -726,6 +779,69 @@ mod tests {
     }
 
     #[test]
+    fn removed_from_one_service_keeps_show_on_the_other() {
+        // Show 500 left Disney but its current detail still lists Crunchyroll:
+        // refresh it (Crunchyroll only), don't delete it.
+        let json = r#"{
+            "changes": [
+                {"changeType":"removed","itemType":"show","showId":"500","service":{"id":"disney"}}
+            ],
+            "shows": {
+                "500": {"id":"500","imdbId":"tt5","title":"Both","showType":"series",
+                        "streamingOptions":{"gb":[{"service":{"id":"crunchyroll"},
+                                                   "link":"https://www.crunchyroll.com/x"}]}}
+            },
+            "hasMore": false
+        }"#;
+        let both = [Service::Disney, Service::Crunchyroll];
+        let (parsed, _) = parse_changes(json, "gb", &both).unwrap();
+        assert!(parsed.removals.is_empty(), "must not delete the whole show");
+        assert_eq!(parsed.additions.len(), 1);
+        assert_eq!(parsed.additions[0].0, "500");
+        assert_eq!(
+            parsed.additions[0].1.services,
+            vec!["crunchyroll".to_string()]
+        );
+    }
+
+    #[test]
+    fn new_whose_current_detail_lists_no_wanted_service_is_a_removal() {
+        // Added then removed inside the window: the embedded detail is current
+        // state, so it must not be cached under the "both services" fallback.
+        let json = r#"{
+            "changes": [
+                {"changeType":"new","itemType":"show","showId":"600","service":{"id":"disney"}}
+            ],
+            "shows": {
+                "600": {"id":"600","imdbId":"tt6","title":"Gone","showType":"movie",
+                        "streamingOptions":{"gb":[{"service":{"id":"netflix"}}]}}
+            },
+            "hasMore": false
+        }"#;
+        let (parsed, _) = parse_changes(json, "gb", &[Service::Disney]).unwrap();
+        assert!(parsed.additions.is_empty());
+        assert_eq!(parsed.removals, vec!["600".to_string()]);
+    }
+
+    #[test]
+    fn removed_without_detail_drops_only_that_service() {
+        let json = r#"{
+            "changes": [
+                {"changeType":"removed","itemType":"show","showId":"700","service":{"id":"crunchyroll"}}
+            ],
+            "shows": {},
+            "hasMore": false
+        }"#;
+        let (parsed, _) =
+            parse_changes(json, "gb", &[Service::Disney, Service::Crunchyroll]).unwrap();
+        assert!(parsed.removals.is_empty());
+        assert_eq!(
+            parsed.service_removals,
+            vec![("700".to_string(), Service::Crunchyroll)]
+        );
+    }
+
+    #[test]
     fn parse_changes_propagates_cursor() {
         let json = r#"{"changes":[],"shows":{},"hasMore":true,"nextCursor":"abc"}"#;
         let (_, cursor) = parse_changes(json, "gb", &[Service::Disney]).unwrap();
@@ -800,6 +916,7 @@ mod tests {
         let parsed = ParsedChanges {
             additions: vec![("new1".to_string(), cached("New"))],
             removals: vec!["drop".to_string()],
+            service_removals: vec![],
         };
         apply_changes(&pool, &parsed).await.unwrap();
         let titles: Vec<String> = motn_cache::load_all(&pool)
@@ -811,5 +928,36 @@ mod tests {
         assert!(titles.contains(&"Keep".to_string()));
         assert!(titles.contains(&"New".to_string()));
         assert!(!titles.contains(&"Drop".to_string()));
+    }
+
+    #[tokio::test]
+    async fn apply_service_removal_keeps_other_service_and_deletes_when_empty() {
+        let (_dir, pool) = test_pool().await;
+        let mut both = cached("Both");
+        both.services = vec!["disney".into(), "crunchyroll".into()];
+        both.links = vec![
+            ("disney".into(), "https://www.disneyplus.com/x".into()),
+            ("crunchyroll".into(), "https://www.crunchyroll.com/x".into()),
+        ];
+        motn_cache::upsert(&pool, "both", &both).await.unwrap();
+        motn_cache::upsert(&pool, "solo", &cached("Solo"))
+            .await
+            .unwrap();
+        let parsed = ParsedChanges {
+            additions: vec![],
+            removals: vec![],
+            service_removals: vec![
+                ("both".to_string(), Service::Disney),
+                ("solo".to_string(), Service::Disney),
+                ("absent".to_string(), Service::Disney),
+            ],
+        };
+        apply_changes(&pool, &parsed).await.unwrap();
+        let titles = motn_cache::load_all(&pool).await.unwrap();
+        assert_eq!(titles.len(), 1, "solo lost its only service and is deleted");
+        assert_eq!(titles[0].title, "Both");
+        assert_eq!(titles[0].services, vec![Service::Crunchyroll]);
+        assert_eq!(titles[0].links.len(), 1);
+        assert_eq!(titles[0].links[0].0, Service::Crunchyroll);
     }
 }
