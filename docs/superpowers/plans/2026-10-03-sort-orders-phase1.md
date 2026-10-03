@@ -25,22 +25,24 @@
 
 ## Review Focus
 
-1. **Ratings on titles outside the catalogue or without an embedding** (most of a big IMDb import) must be ignored, not counted in `basis`, and must not error — Task 3 test `ratings_outside_catalogue_are_ignored`.
-2. **Refining or stepping inside an answer must not override a sort the user picked during that answer** — only entering answer mode selects Relevance — Task 7 test `refine keeps an explicitly chosen sort`.
-3. **A 429 in the middle of a full seed is a failed seed** and must start the 3-day back-off — Task 4 test `rate_limited_seed_records_backoff`.
-4. **Embeddings of a different length** (a partially backfilled model change) must be skipped, not panic in the dot product — Task 2 test `vector_set_skips_mismatched_lengths`.
-5. **Every candidate watched or rated** (basis ≥ 3, empty `ids`) must leave For you enabled and render the sunk list, not an empty grid — Task 7 test `for you with empty ids renders everything sunk`.
+1. **MOTN `/countries` that parses to nothing or a seed that returns no shows** must fail the MOTN source, never report "ok" with zero rows (which would delete every Disney+/Crunchyroll title) — Task 4 tests `unparseable_countries_fails_and_keeps_cache`, `empty_seed_is_a_failed_seed`.
+2. **Ratings on titles outside the catalogue or without an embedding** (most of a big IMDb import) must be ignored, not counted in `basis`, and must not error — Task 3 test `ratings_outside_catalogue_are_ignored`.
+3. **Refining or stepping inside an answer must not override a sort the user picked during that answer** — only entering answer mode selects Relevance — Task 7 test `refine keeps an explicitly chosen sort`.
+4. **A 429 in the middle of a full seed is a failed seed** and must start the 3-day back-off — Task 4 test `rate_limited_seed_records_backoff`.
+5. **Embeddings of a different length** (a partially backfilled model change) must be skipped, not panic in the dot product — Task 2 test `vector_set_skips_mismatched_lengths`.
+6. **Every candidate watched or rated** (basis ≥ 3, empty `ids`) must leave For you enabled and render the sunk list, not an empty grid — Task 7 test `for you with empty ids renders everything sunk`.
 
 ---
 
-### Task 1: `newSince` on the catalogue list
+### Task 1: `newSince` on the catalogue list and title detail
 
 **Files:**
-- Modify: `src/models.rs` (`TitleListRow`, `TitleListItem`)
-- Modify: `src/db/catalogue.rs` (`fetch_catalogue`, new pure fn + tests)
+- Modify: `src/models.rs` (`TitleListItem`, `TitleDto`)
+- Modify: `src/db/catalogue.rs` (`fetch_catalogue`, `fetch_title`, new fns + tests)
+- Test: `src/routes/catalogue.rs` (route test for the detail JSON)
 
 **Interfaces:**
-- Produces: `TitleListItem.new_since: Option<i64>` serialised as `"newSince"` (unix secs or `null`); `pub fn new_since_map(added: &[(i64, i64)], now: i64) -> HashMap<i64, i64>` (input `(title_id, added_at_unix)`, output only the ids that are new).
+- Produces: `TitleListItem.new_since` **and** `TitleDto.new_since`: `Option<i64>` serialised as `"newSince"` (unix secs or `null`) — the frontend's `isTitleDetail` builds on `isTitle`, so the detail must carry the key too; `pub fn new_since_map(added: &[(i64, i64)], now: i64) -> HashMap<i64, i64>` (input `(title_id, added_at_unix)`, output only the ids that are new); `async fn load_new_since(pool: &SqlitePool, now: i64) -> anyhow::Result<HashMap<i64, i64>>` (one query `SELECT id, CAST(strftime('%s', added_at) AS INTEGER) FROM titles`, then `new_since_map`), shared by `fetch_catalogue` and `fetch_title`.
 
 - [ ] **Step 1: Write the failing tests** (sync `#[test]`s in a new `new_since_tests` module in `src/db/catalogue.rs` — the existing `tests` module uses `#[actix_web::test]`):
 
@@ -71,13 +73,15 @@ const NOW: i64 = 1_760_000_000;
 }
 ```
 
-- [ ] **Step 2: Run** `cargo test --lib new_since` — expect a compile failure (`new_since_map` not found).
+Plus, in `src/routes/catalogue.rs` tests (`#[actix_web::test]`, seeded pool): `title_detail_carries_new_since` — `GET /api/titles/1` JSON has a `"newSince"` key (`body.get("newSince").is_some()`), and `GET /api/catalogue` items do too.
 
-- [ ] **Step 3: Implement** `new_since_map` with the constants `NEW_WINDOW_SECS`, `BULK_THRESHOLD`, `BULK_WINDOW_SECS`: sort by timestamp, two-pointer count of rows within `[t − 1800, t + 1800]` (counting itself); keep ids with `now − t ≤ NEW_WINDOW_SECS` and count `< 300`. Add `added_at: i64` to `TitleListRow` and select it as `CAST(strftime('%s', added_at) AS INTEGER) AS added_at`; in `fetch_catalogue` build the map once with `now` from `SystemTime::now()` and set `new_since` per item. Add `#[serde(rename = "newSince")] pub new_since: Option<i64>` to `TitleListItem` and update its literal in `models.rs` tests.
+- [ ] **Step 2: Run** `cargo test --lib new_since catalogue` — expect a compile failure (`new_since_map` not found).
+
+- [ ] **Step 3: Implement** `new_since_map` with the constants `NEW_WINDOW_SECS`, `BULK_THRESHOLD`, `BULK_WINDOW_SECS`: sort by timestamp, two-pointer count of rows within `[t − 1800, t + 1800]` (counting itself); keep ids with `now − t ≤ NEW_WINDOW_SECS` and count `< 300`. Implement `load_new_since`; `fetch_catalogue` calls it once (with `now` from `SystemTime::now()`) and sets `new_since` per item; `fetch_title` calls it and looks up its id. Add `#[serde(rename = "newSince")] pub new_since: Option<i64>` to both `TitleListItem` and `TitleDto`, and update their literals in tests.
 
 - [ ] **Step 4: Run** `cargo test --lib catalogue` — PASS, then the full gates.
 
-- [ ] **Step 5: Commit** `feat(catalogue): newSince with stateless bulk-insert rule`
+- [ ] **Step 5: Commit** `feat(catalogue): newSince with stateless bulk-insert rule (list + detail)`
 
 ---
 
@@ -205,7 +209,7 @@ The bodies marked with comments are the implementer's fixtures; each must assert
 
 **Interfaces:**
 - Produces (`db::motn_meta`):
-  - key consts `CATALOGS = "motn.catalogs"`, `CATALOGS_CHECKED_AT = "motn.catalogs_checked_at"`, `LAST_SEED_AT = "motn.last_seed_at"`, `LAST_MODE = "motn.last_mode"`, `SEED_FAILED_AT = "motn.seed_failed_at"`; request keys are `"motn.requests." || strftime('%Y-%m','now')`.
+  - catalogs keys are per country: `pub fn catalogs_key(country: &str) -> String` → `"motn.catalogs.<country>"`, `pub fn catalogs_checked_key(country: &str) -> String` → `"motn.catalogs_checked_at.<country>"`; key consts `LAST_SEED_AT = "motn.last_seed_at"`, `LAST_MODE = "motn.last_mode"`, `SEED_FAILED_AT = "motn.seed_failed_at"`; request keys are `"motn.requests." || strftime('%Y-%m','now')`.
   - `pub async fn increment_requests(pool) -> anyhow::Result<()>` (single upsert: insert `'1'` or `CAST(value AS INTEGER) + 1`)
   - `pub async fn requests_this_month(pool) -> anyhow::Result<i64>`
   - `pub async fn get_i64(pool, key) -> anyhow::Result<Option<i64>>`, `pub async fn set_i64(pool, key, v: i64) -> anyhow::Result<()>`
@@ -218,17 +222,21 @@ async fn every_request_is_counted()                 // seed against a 2-page fak
 async fn rate_limited_seed_records_backoff()        // page 1 ok, page 2 → 429: fetch errs, err.downcast_ref::<RateLimited>().is_some(), SEED_FAILED_AT set
 async fn seed_backoff_errors_without_network()      // SEED_FAILED_AT = now - 3600, empty cache: fetch errs containing "seed back-off", hits == 0
 async fn seed_backoff_expires_after_three_days()    // SEED_FAILED_AT = now - 3*86400 - 1 → seed runs (hits > 0)
-async fn catalogs_reused_within_seven_days()        // CATALOGS="disney,crunchyroll", checked now-60: delta run never hits /countries
-async fn catalogs_re_resolved_after_seven_days()    // checked now - 7*86400 - 1 → /countries hit once, CATALOGS_CHECKED_AT updated
+async fn catalogs_reused_within_seven_days()        // catalogs_key("gb")="disney,crunchyroll", catalogs_checked_key("gb")=now-60: delta run never hits /countries
+async fn catalogs_re_resolved_after_seven_days()    // checked now - 7*86400 - 1 → /countries hit once, catalogs_checked_key("gb") updated
 async fn cached_catalogs_used_when_countries_fails()// stale cache + /countries → 500: run proceeds with cached catalogs
 async fn modes_recorded()                           // after seed: LAST_MODE "seed", LAST_SEED_AT set, SEED_FAILED_AT == 0; after delta: LAST_MODE "delta"
+async fn unparseable_countries_fails_and_keeps_cache() // no cached catalogs, /countries → 200 "{\"gb\": 1}": fetch errs; motn_catalog_cache rows unchanged
+async fn countries_listing_none_is_an_error()        // /countries lists only netflix for gb: fetch errs (never Ok(empty)), nothing cached under catalogs_key("gb")
+async fn empty_seed_is_a_failed_seed()               // seed page returns {"shows":[],"hasMore":false}: fetch errs, SEED_FAILED_AT set, existing cache rows unchanged
+async fn catalogs_cache_is_per_country()             // fresh catalogs cached for "us" only: a "gb" client still calls /countries
 ```
 
 Plus `motn_meta` unit tests: `increment_requests` three times → `requests_this_month == 3`; `get_i64` on a missing key → `None`.
 
 - [ ] **Step 2: Run** `cargo test --lib motn` — FAIL.
 
-- [ ] **Step 3: Implement.** Add `base: String` to `MotnClient` (`new` uses `MOTN_BASE`); route every request through `async fn get_text(&self, path: &str, query: &[(&str, &str)]) -> anyhow::Result<String>` which calls `increment_requests` **before** sending, maps HTTP 429 to `RateLimited`, otherwise `error_for_status` + `text()`. Reorder `fetch`: `decide_mode` → if `Seed` and `SEED_FAILED_AT` is within `SEED_BACKOFF_SECS`, `bail!("MOTN seed back-off until {unix}")` with no request → resolve catalogs (`force = true` on a seed; else reuse `CATALOGS` if `CATALOGS_CHECKED_AT` is within `CATALOGS_MAX_AGE_SECS`, mapping ids with `service_for_id`; on `/countries` failure fall back to a cached value with `tracing::warn!`) → run. A seed error sets `SEED_FAILED_AT = now` and returns the error; a successful seed sets `LAST_SEED_AT = now`, `LAST_MODE = "seed"`, `SEED_FAILED_AT = 0`; a successful delta sets `LAST_MODE = "delta"`. A 429 log line includes `requests_this_month`.
+- [ ] **Step 3: Implement.** Add `base: String` to `MotnClient` (`new` uses `MOTN_BASE`); route every request through `async fn get_text(&self, path: &str, query: &[(&str, &str)]) -> anyhow::Result<String>` which calls `increment_requests` **before** sending, maps HTTP 429 to `RateLimited`, otherwise `error_for_status` + `text()`. Reorder `fetch`: `decide_mode` → if `Seed` and `SEED_FAILED_AT` is within `SEED_BACKOFF_SECS`, `bail!("MOTN seed back-off until {unix}")` with no request → resolve catalogs (`force = true` on a seed; else reuse `catalogs_key(country)` if `catalogs_checked_key(country)` is within `CATALOGS_MAX_AGE_SECS`, mapping ids with `service_for_id`; on `/countries` failure — HTTP error, **unparseable body, or none of the wanted services listed** — fall back to a cached value with `tracing::warn!`, else return an error; never cache an empty result) → run. `resolve_catalogs` must no longer return `Ok(None)`: an empty service list is an error, so `fetch` can never return `Ok(vec![])` from catalog resolution (that path today records MOTN "ok" with zero rows, and reconcile + prune would delete every Disney+/Crunchyroll title). A seed that yields **zero** shows is an error (`"MOTN seed returned no shows"`) handled like any failed seed (sets `SEED_FAILED_AT`, cache untouched). A seed error sets `SEED_FAILED_AT = now` and returns the error; a successful seed sets `LAST_SEED_AT = now`, `LAST_MODE = "seed"`, `SEED_FAILED_AT = 0`; a successful delta sets `LAST_MODE = "delta"`. A 429 log line includes `requests_this_month`.
 
 - [ ] **Step 4: Run** tests — PASS; full gates.
 
@@ -244,12 +252,17 @@ Plus `motn_meta` unit tests: `increment_requests` three times → `requests_this
 
 **Interfaces:**
 - Consumes: Task 4's keys, `requests_this_month`, `get_i64`; `motn_cache::count`.
-- Produces: `#[derive(Serialize)] #[serde(rename_all = "camelCase")] pub struct MotnStatus { cache_size: i64, last_mode: Option<String>, last_seed_at: Option<i64>, seed_failed_at: Option<i64>, catalogs_checked_at: Option<i64>, requests_this_month: i64, monthly_limit: i64 }` and `pub async fn status(pool) -> anyhow::Result<Option<MotnStatus>>` — `None` when the cache is empty **and** `LAST_MODE` is unset (MOTN never ran); `seed_failed_at` is `None` when stored as `0`; `monthly_limit = MOTN_MONTHLY_LIMIT`. `StatusBody` gains `motn: Option<MotnStatus>` (JSON `"motn"`).
+- Modify also: `src/sync/mod.rs` — `impl SyncRunner { pub fn has_source(&self, name: &str) -> bool }` (any `sources[i].name() == name`).
+- Produces: `#[derive(Serialize)] #[serde(rename_all = "camelCase")] pub struct MotnStatus { cache_size: i64, last_mode: Option<String>, last_seed_at: Option<i64>, seed_failed_at: Option<i64>, catalogs_checked_at: Option<i64>, requests_this_month: i64, monthly_limit: i64 }` and `pub async fn status(pool) -> anyhow::Result<MotnStatus>`; the route sets `motn` to `None` **only when `!runner.has_source("motn")`** (MOTN not configured) — a configured MOTN that has never succeeded (e.g. first seed failed, in back-off) still reports its counts; `seed_failed_at` is `None` when stored as `0`; `monthly_limit = MOTN_MONTHLY_LIMIT`. `StatusBody` gains `motn: Option<MotnStatus>` (JSON `"motn"`).
 
 - [ ] **Step 1: Write the failing tests** in `src/routes/sync.rs` tests:
 
 ```rust
-#[actix_web::test] async fn status_motn_is_null_when_never_run() { /* body["motn"].is_null() */ }
+#[actix_web::test] async fn status_motn_is_null_when_not_configured() { /* runner without a "motn" source → body["motn"].is_null() */ }
+#[actix_web::test] async fn status_reports_motn_after_a_failed_first_seed() {
+    // runner with a fake source named "motn"; empty cache, LAST_MODE unset, SEED_FAILED_AT = now-60,
+    // one increment_requests → body["motn"]["requestsThisMonth"] == 1, ["seedFailedAt"] is a number
+}
 #[actix_web::test] async fn status_reports_motn_state() {
     // set LAST_MODE "delta", LAST_SEED_AT 1757635200, two increment_requests, one cache row →
     // body["motn"]["lastMode"] == "delta", ["lastSeedAt"] == 1757635200,
@@ -258,7 +271,7 @@ Plus `motn_meta` unit tests: `increment_requests` three times → `requests_this
 ```
 
 - [ ] **Step 2: Run** `cargo test --lib routes::sync` — FAIL.
-- [ ] **Step 3: Implement** `motn_meta::status` and wire it into `status()` (500 + log on error, like the other parts).
+- [ ] **Step 3: Implement** `SyncRunner::has_source`, `motn_meta::status`, and wire them into `status()` (500 + log on error, like the other parts).
 - [ ] **Step 4: Run** — PASS; full gates.
 - [ ] **Step 5: Commit** `feat(sync): MOTN cache and request state on /api/sync/status`
 
@@ -274,7 +287,7 @@ Plus `motn_meta` unit tests: `increment_requests` three times → `requests_this
 **Interfaces:**
 - Produces: `TitleListItem.newSince: number | null`; `interface MotnStatus { cacheSize: number; lastMode: string | null; lastSeedAt: number | null; seedFailedAt: number | null; catalogsCheckedAt: number | null; requestsThisMonth: number; monthlyLimit: number }`; `SyncStatus.motn: MotnStatus | null`; `interface ForYouResult { ids: number[]; basis: number }`; `export async function getForYou(): Promise<ForYouResult>` (throws `Error` on non-2xx or a malformed body).
 
-- [ ] **Step 1: Write the failing tests:** `isTitle` rejects `newSince: "x"`, accepts `null` and a number; `getForYou` resolves `{ids:[3,1],basis:4}` from a mocked `fetch`, rejects on HTTP 500, rejects `{ids:"x"}`.
+- [ ] **Step 1: Write the failing tests:** `isTitle` rejects `newSince: "x"`, accepts `null` and a number; `getTitle` accepts a detail body that includes `newSince` (guards the Task 1 contract); `getForYou` resolves `{ids:[3,1],basis:4}` from a mocked `fetch`, rejects on HTTP 500, rejects `{ids:"x"}`.
 - [ ] **Step 2: Run** `npx vitest run src/api` — FAIL.
 - [ ] **Step 3: Implement** the types, the `isTitle` clause `(r.newSince === null || typeof r.newSince === 'number')`, and `getForYou` mirroring `getCatalogue`'s error style. Update existing `Title` test fixtures that are now missing `newSince` (add `newSince: null`).
 - [ ] **Step 4: Run** `npx vitest run` and `npx vue-tsc -b` — PASS.
