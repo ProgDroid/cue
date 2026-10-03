@@ -23,13 +23,15 @@ const typeButtons = [
   { key: 'series' as const, label: 'Series' },
 ]
 
-// Sort options
-const sortOptions = [
-  { value: 'trending' as const, label: 'Trending' },
-  { value: 'rating' as const, label: 'Top rated' },
-  { value: 'year' as const, label: 'Newest' },
-  { value: 'az' as const, label: 'A–Z' },
-]
+// Sort options — Relevance only exists while an answer is active
+const sortOptions = computed<{ value: SortKey; label: string }[]>(() => [
+  ...(store.answerActive ? [{ value: 'relevance' as const, label: 'Relevance' }] : []),
+  { value: 'trending', label: 'Trending' },
+  { value: 'foryou', label: 'For you' },
+  { value: 'rating', label: 'Top rated' },
+  { value: 'year', label: 'Newest' },
+  { value: 'az', label: 'A–Z' },
+])
 
 // Rating threshold options (value 0 = no filter)
 const ratingOptions = [
@@ -104,10 +106,25 @@ const resultCount = computed(() => `${store.visibleTitles.length} titles`)
     <!-- Sort select -->
     <div class="select-wrap">
       <select v-model="selectedSort" data-test="sort-select" class="filter-select" aria-label="Sort by">
-        <option v-for="opt in sortOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        <option
+          v-for="opt in sortOptions"
+          :key="opt.value"
+          :value="opt.value"
+          :disabled="opt.value === 'foryou' && !store.forYouAvailable"
+        >{{ opt.label }}</option>
       </select>
       <span class="select-arrow" aria-hidden="true">&#9660;</span>
     </div>
+    <span v-if="!store.forYouAvailable" data-test="foryou-hint" class="sort-note">
+      Rate 3+ titles you liked to unlock For you
+    </span>
+    <button
+      v-if="store.sort === 'foryou' && store.forYou.status === 'error'"
+      type="button"
+      data-test="foryou-error"
+      class="sort-note sort-note-error"
+      @click="store.loadForYou()"
+    >For you unavailable — retry</button>
 
     <!-- Rating threshold select -->
     <div class="select-wrap">
@@ -210,6 +227,23 @@ const resultCount = computed(() => `${store.visibleTitles.length} titles`)
   pointer-events: none;
   color: var(--text-faint, #5f6570);
   font-size: 10px;
+}
+
+/* Sort-menu captions (For you hint / error) */
+.sort-note {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--text-muted, #8a909b);
+}
+
+.sort-note-error {
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text-danger, #f5a3a3);
+  cursor: pointer;
+  text-decoration: underline;
 }
 
 /* Result count — right-aligned via margin-left: auto */
