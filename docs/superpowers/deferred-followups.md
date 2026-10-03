@@ -152,7 +152,9 @@ live but still working acceptably:
   BOM on the first header, CRLF line endings, and the full 14-column header.
   The automated suite proves the contract + persistence; only a real export
   exercises these CSV quirks.
-  Non-blocking polish noted at merge: ~~result line has no singular/plural
+  Non-blocking polish noted at merge (✅ all four code items below DONE 2026-10-03,
+  `89601ed`: indexed `matched`, production route table in tests, `invalid_utf8`
+  test, calendar-aware date check): ~~result line has no singular/plural
   handling ("1 rows skipped")~~ (fixed 2026-06-23, see Polish section);
   `matched` scans the full `titles` table
   (fine at ~5k, scales with catalogue not import); endpoint test harness
@@ -297,20 +299,20 @@ hardening pass — backend tests 129 passing, clippy `-D warnings` clean.)
 Whole-branch review verdict was **Ready to merge** (no Critical/Major). These are
 non-blocking follow-ups surfaced during the review:
 
-- **Route-level test for the non-allowlisted-link → 404 path** (`watch::redirect`):
+- ✅ **DONE 2026-10-03 (`c6fb27b`).** **Route-level test for the non-allowlisted-link → 404 path** (`watch::redirect`):
   the `is_allowed_motn_link` predicate is unit-tested (http/wrong-host/Plex), but
   no integration test seeds a stored-but-non-allowlisted link and asserts the
   `tracing::warn` arm returns 404. The most security-adjacent of the deferred gaps.
-- **Log the swallowed DB error in `watch::redirect`:** the `plex_rating_key`/`link`
+- ✅ **DONE 2026-10-03 (`c6fb27b`).** **Log the swallowed DB error in `watch::redirect`:** the `plex_rating_key`/`link`
   lookups use `.ok()`, turning a transient DB error into a silent 404 with no log
   line. Add a `tracing::warn` on the `Err` arm for debuggability (read-only path,
   not a correctness/security issue).
-- **`watchable` vs `plex_web_url` residual edge:** `watchable` gates Plex on
+- ✅ **DONE 2026-10-03 (`c6fb27b`) — title detail drops `plex` from `watchable` without `PLEX_WEB_URL`.** **`watchable` vs `plex_web_url` residual edge:** `watchable` gates Plex on
   `plex_rating_key + machine_id` but not `plex_web_url`. Removing `PLEX_URL`/
   `PLEX_WEB_URL` after a successful Plex sync would render a "Watch on Plex" button
   whose redirect 404s. Pathological config change (can't sync Plex without
   `PLEX_URL`); document or add the guard if it ever bites.
-- **Minor test/cosmetic niceties:** rename `run_sync_persists_server_meta_non_fatally`
+- ✅ **DONE 2026-10-03 (`c6fb27b`), except the `color-mix` note (accepted).** **Minor test/cosmetic niceties:** rename `run_sync_persists_server_meta_non_fatally`
   → `…_persists_server_meta` (the Err test is the real non-fatal guard); add an
   exclusion assertion to the `watchable` test; `color-mix` in WatchLinks.vue needs
   Baseline-2023 browsers (acceptable for self-hosted).
@@ -327,13 +329,13 @@ whole-branch review: READY TO MERGE, no Critical/Major. Deferred items:
   during a full scroll-through, and scroll smoothness here. Only if still
   inadequate do we revisit server-side pagination (which would then also need a
   "hydrate titles by ids" endpoint so Ask results can render).
-- **M3 (Minor): AppHeader debounce timer not cleared on unmount.** A pending
+- ✅ **DONE 2026-10-03 — `debounce` gained `cancel()`, called on unmount.** **M3 (Minor): AppHeader debounce timer not cleared on unmount.** A pending
   `setTimeout` can fire `store.setQuery` after unmount. Harmless today (the
   header is a persistent shell component and the Pinia store outlives it); add an
   `onUnmounted` clear for tidiness if the file is touched.
-- **M1 (Minor): `firstWindow` naming in `computeWindow.ts`** — holds a count but
+- ✅ **DONE 2026-10-03 — renamed `firstWindowEnd`.** **M1 (Minor): `firstWindow` naming in `computeWindow.ts`** — holds a count but
   is assigned to `endIndex`; rename to `firstWindowEnd`/`windowSize` opportunistically.
-- **M2 (Minor): `useDelayedFlag` getter-arg path has no dedicated unit test** —
+- ✅ **DONE 2026-10-03 — direct getter test added.** **M2 (Minor): `useDelayedFlag` getter-arg path has no dedicated unit test** —
   covered transitively via BrowseView; add a direct case opportunistically.
 - **Pre-existing (not a regression): one-frame `--cols:1` cold flash** before the
   first width measurement. Deferred previously; unchanged by this branch.

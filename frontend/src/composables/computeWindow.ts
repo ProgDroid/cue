@@ -42,8 +42,8 @@ export function computeWindow(m: GridMetrics): GridWindow {
   if (rowHeight <= 0) {
     // Width is unknown too (very first synchronous render, pre-measure). Render
     // a small first window so we never mount the entire list.
-    const firstWindow = Math.min(m.itemCount, cols * (m.overscanRows + 4))
-    return { cols, startIndex: 0, endIndex: firstWindow, topSpacer: 0, bottomSpacer: 0, totalRows }
+    const firstWindowEnd = Math.min(m.itemCount, cols * (m.overscanRows + 4))
+    return { cols, startIndex: 0, endIndex: firstWindowEnd, topSpacer: 0, bottomSpacer: 0, totalRows }
   }
 
   const startRow = Math.max(0, Math.floor(m.scrollOffset / rowHeight) - m.overscanRows)

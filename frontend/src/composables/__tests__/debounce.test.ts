@@ -28,4 +28,14 @@ describe('debounce', () => {
     expect(spy).toHaveBeenCalledTimes(1)
     expect(spy).toHaveBeenCalledWith('y')
   })
+
+  it('cancel() drops a pending call', () => {
+    vi.useFakeTimers()
+    const spy = vi.fn()
+    const d = debounce(spy, 120)
+    d('x')
+    d.cancel()
+    vi.advanceTimersByTime(200)
+    expect(spy).not.toHaveBeenCalled()
+  })
 })
