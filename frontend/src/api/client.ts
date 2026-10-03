@@ -17,6 +17,7 @@ function isTitle(v: unknown): v is Title {
     && (r.score === null || typeof r.score === 'number')
     && (r.anilistScore === null || typeof r.anilistScore === 'number')
     && (r.rating === null || typeof r.rating === 'number')
+    && (r.newSince === null || typeof r.newSince === 'number')
 }
 
 function isTitleDetail(v: unknown): v is TitleDetail {

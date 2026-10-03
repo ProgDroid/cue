@@ -11,7 +11,7 @@ import type { Title, TitleDetail } from '@/types'
 const listItem: Title = {
   id: 5, imdbId: 'tt5', title: 'Coco', year: 2017, services: ['disney'],
   type: 'movie', genres: ['Animation', 'Musical'], score: 8.4, anilistScore: null, len: '105 min',
-  watched: false, rating: null,
+  watched: false, rating: null, newSince: null,
 }
 const detail: TitleDetail = { ...listItem, desc: 'A boy and music.', cast: ['Anthony Gonzalez'], watchable: [] }
 

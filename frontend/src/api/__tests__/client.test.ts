@@ -5,7 +5,7 @@ import type { TitleDetail, ServiceKey } from '@/types'
 const listItem = {
   id: 1, imdbId: 'tt1', title: 'Coco', year: 2017, services: ['disney'] as ServiceKey[],
   type: 'movie' as const, genres: ['Animation'], score: 8.4, anilistScore: null, len: '105 min',
-  watched: false, rating: null,
+  watched: false, rating: null, newSince: null,
 }
 const detail: TitleDetail = { ...listItem, desc: 'A boy.', cast: ['A. Gonzalez'], watchable: ['plex'] }
 
@@ -96,6 +96,28 @@ describe('api client', () => {
 
   it('getTitle rejects a detail with non-array watchable', async () => {
     vi.stubGlobal('fetch', mockFetch(200, { ...detail, watchable: 'plex' }))
+    await expect(getTitle(1)).rejects.toThrow(/invalid/)
+  })
+
+  it('getCatalogue accepts newSince as null or a number', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, [listItem, { ...listItem, id: 2, newSince: 1_700_000_000 }]))
+    const out = await getCatalogue()
+    expect(out.map((t) => t.newSince)).toEqual([null, 1_700_000_000])
+  })
+
+  it('getCatalogue rejects a wrong-typed newSince', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, [{ ...listItem, newSince: 'x' }]))
+    await expect(getCatalogue()).rejects.toThrow(/invalid|title/i)
+  })
+
+  it('getTitle accepts a detail body that includes newSince', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, { ...detail, newSince: 1_700_000_000 }))
+    const out = await getTitle(1)
+    expect(out.newSince).toBe(1_700_000_000)
+  })
+
+  it('getTitle rejects a detail with a wrong-typed newSince', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, { ...detail, newSince: 'x' }))
     await expect(getTitle(1)).rejects.toThrow(/invalid/)
   })
 })

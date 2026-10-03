@@ -22,6 +22,7 @@ function t(id: number): Title {
     len: '',
     watched: false,
     rating: null,
+    newSince: null,
   }
 }
 
