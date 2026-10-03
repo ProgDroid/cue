@@ -395,7 +395,7 @@ mod tests {
     fn vector_set_drops_zero_norm_after_centring() {
         // Identical vectors centre to zero and are all dropped.
         let s = VectorSet::build(vec![(1, vec![1.0, 2.0]), (2, vec![1.0, 2.0])]);
-        assert!(s.ids.is_empty());
+        assert_eq!(s.ids, Vec::<i64>::new());
     }
 
     #[test]
@@ -434,7 +434,7 @@ mod tests {
             rated(2, 7, "2026-01-02 00:00:00"),
         ];
         let r = rank(&set, &ratings, &HashSet::from([1, 2]));
-        assert!(r.ids.is_empty());
+        assert_eq!(r.ids, Vec::<i64>::new());
         assert_eq!(r.basis, 2);
     }
 
@@ -452,7 +452,7 @@ mod tests {
         ];
         let r = rank(&set, &ratings, &HashSet::from([1, 2]));
         assert_eq!(r.basis, 2);
-        assert!(r.ids.is_empty());
+        assert_eq!(r.ids, Vec::<i64>::new());
     }
 
     #[test]
@@ -576,7 +576,7 @@ mod tests {
         let sel = select_basis(&set, &ratings);
         assert_eq!(sel.negatives.len(), MAX_NEGATIVES);
         assert_eq!(sel.negatives[0], (102, 1.0));
-        assert!(sel.positives.is_empty());
+        assert_eq!(sel.positives, Vec::<(i64, f32)>::new());
     }
 
     #[test]

@@ -11,10 +11,10 @@ const DOT_LANES: usize = 8;
 pub fn dot(a: &[f32], b: &[f32]) -> f32 {
     let n = a.len().min(b.len());
     let (a, b) = (&a[..n], &b[..n]);
-    let (chunks_a, chunks_b) = (a.chunks_exact(DOT_LANES), b.chunks_exact(DOT_LANES));
-    let (rest_a, rest_b) = (chunks_a.remainder(), chunks_b.remainder());
+    let (chunks_a, rest_a) = a.as_chunks::<DOT_LANES>();
+    let (chunks_b, rest_b) = b.as_chunks::<DOT_LANES>();
     let mut acc = [0.0_f32; DOT_LANES];
-    for (ca, cb) in chunks_a.zip(chunks_b) {
+    for (ca, cb) in chunks_a.iter().zip(chunks_b) {
         for ((lane, x), y) in acc.iter_mut().zip(ca).zip(cb) {
             *lane += x * y;
         }

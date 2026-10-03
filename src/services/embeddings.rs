@@ -12,6 +12,7 @@ const OPENAI_URL: &str = "https://api.openai.com/v1/embeddings";
 const EMBED_BATCH: usize = 100;
 
 /// Produces an embedding for each input text, preserving input order.
+#[allow(clippy::double_must_use)] // async_trait expansion marks the boxed future #[must_use]
 #[async_trait]
 pub trait Embedder: Send + Sync {
     /// # Errors

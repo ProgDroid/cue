@@ -376,7 +376,7 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert!(!nodate.is_empty());
+        assert_ne!(nodate, "");
     }
 
     #[tokio::test]
@@ -438,6 +438,6 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert!(!t900.is_empty());
+        assert_ne!(t900, "");
     }
 }

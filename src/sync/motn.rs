@@ -985,7 +985,7 @@ mod tests {
         }"#;
         let (parsed, _) = parse_changes(json, "gb", &[Service::Disney]).unwrap();
         assert!(parsed.additions.is_empty());
-        assert!(parsed.removals.is_empty());
+        assert_eq!(parsed.removals, Vec::<String>::new());
     }
 
     #[test]
@@ -1044,7 +1044,7 @@ mod tests {
         }"#;
         let (parsed, _) =
             parse_changes(json, "gb", &[Service::Disney, Service::Crunchyroll]).unwrap();
-        assert!(parsed.removals.is_empty());
+        assert_eq!(parsed.removals, Vec::<String>::new());
         assert_eq!(
             parsed.service_removals,
             vec![("700".to_string(), Service::Crunchyroll)]

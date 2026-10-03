@@ -28,6 +28,7 @@ pub struct AskAnswer {
 }
 
 /// Ranks candidates against a natural-language query.
+#[allow(clippy::double_must_use)] // async_trait expansion marks the boxed future #[must_use]
 #[async_trait]
 pub trait AskModel: Send + Sync {
     /// # Errors

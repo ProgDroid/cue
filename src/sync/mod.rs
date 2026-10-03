@@ -62,6 +62,7 @@ pub struct FetchedTitle {
 
 /// An external catalogue client. A *client* is the unit of fetching and failure;
 /// the *services* it owns are the unit of membership reconciliation.
+#[allow(clippy::double_must_use)] // async_trait expansion marks the boxed future #[must_use]
 #[async_trait]
 pub trait CatalogueSource: Send + Sync {
     /// Client name, used for logging/orchestration (e.g. "plex", "motn").
