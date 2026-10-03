@@ -120,17 +120,19 @@ pub async fn import_ratings(
     }
     tx.commit().await?;
 
-    // `matched` = imported ids that exist in the catalogue. titles is small
-    // (~5k); intersect in memory to avoid a large dynamic IN clause.
+    // `matched` = distinct imported ids that exist in the catalogue. One indexed
+    // lookup per distinct id (imdb_id is UNIQUE), so the cost scales with the
+    // import, not the catalogue.
     let imported_ids: HashSet<&str> = rows.iter().map(|r| r.imdb_id.as_str()).collect();
-    let title_ids: Vec<String> =
-        sqlx::query_scalar("SELECT imdb_id FROM titles WHERE imdb_id IS NOT NULL")
-            .fetch_all(pool)
-            .await?;
-    let matched = title_ids
-        .iter()
-        .filter(|id| imported_ids.contains(id.as_str()))
-        .count();
+    let mut matched = 0;
+    for id in imported_ids {
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM titles WHERE imdb_id = ?)")
+                .bind(id)
+                .fetch_one(pool)
+                .await?;
+        matched += usize::from(exists);
+    }
 
     Ok(ImportOutcome {
         imported: rows.len(),
@@ -375,6 +377,20 @@ mod tests {
                 .await
                 .unwrap();
         assert!(!nodate.is_empty());
+    }
+
+    #[tokio::test]
+    async fn import_ratings_counts_a_duplicated_match_once() {
+        use crate::import::imdb_ratings::RatingImport;
+        let (pool, _dir) = fresh_pool().await;
+        insert_title(&pool, Some("tt100")).await;
+        let row = |r| RatingImport {
+            imdb_id: "tt100".into(),
+            rating: r,
+            rated_at: None,
+        };
+        let out = import_ratings(&pool, &[row(5), row(6)]).await.unwrap();
+        assert_eq!((out.imported, out.matched), (2, 1));
     }
 
     #[tokio::test]

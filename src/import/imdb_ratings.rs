@@ -25,7 +25,8 @@ struct ImdbRow {
     date_rated: Option<String>,
 }
 
-/// True when `s` is exactly `YYYY-MM-DD` with plausible month/day values.
+/// True when `s` is exactly `YYYY-MM-DD` and names a real calendar date
+/// (month lengths and leap years checked).
 fn looks_like_iso_date(s: &str) -> bool {
     let b = s.as_bytes();
     if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
@@ -35,9 +36,18 @@ fn looks_like_iso_date(s: &str) -> bool {
     if !(digits(0..4) && digits(5..7) && digits(8..10)) {
         return false;
     }
+    let year: u32 = s[0..4].parse().unwrap_or(0);
     let month: u8 = s[5..7].parse().unwrap_or(0);
     let day: u8 = s[8..10].parse().unwrap_or(0);
-    (1..=12).contains(&month) && (1..=31).contains(&day)
+    let leap = (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400);
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    (1..=days_in_month).contains(&day)
 }
 
 /// Parse an `IMDb` ratings-export CSV into validated rows.
@@ -156,5 +166,22 @@ tt0111161,7,2021-01-01\n";
         assert_eq!(parse_ratings("").rows.len(), 0);
         // No recognizable Const column -> every row fails -> no rows.
         assert_eq!(parse_ratings("a,b,c\n1,2,3\n").rows.len(), 0);
+    }
+
+    #[test]
+    fn iso_date_rejects_impossible_calendar_dates() {
+        assert!(looks_like_iso_date("2020-02-29"), "leap day");
+        assert!(looks_like_iso_date("2000-02-29"), "400-year leap day");
+        assert!(looks_like_iso_date("2021-12-31"));
+        assert!(!looks_like_iso_date("2021-02-29"), "not a leap year");
+        assert!(
+            !looks_like_iso_date("1900-02-29"),
+            "century, not a leap year"
+        );
+        assert!(!looks_like_iso_date("2021-02-31"));
+        assert!(!looks_like_iso_date("2021-04-31"));
+        assert!(!looks_like_iso_date("2021-00-10"));
+        assert!(!looks_like_iso_date("2021-13-10"));
+        assert!(!looks_like_iso_date("2021-01-00"));
     }
 }
