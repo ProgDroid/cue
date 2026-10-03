@@ -40,4 +40,27 @@ describe('StarRating', () => {
     expect(stars[6].attributes('aria-pressed')).toBe('true')
     expect(stars[5].attributes('aria-pressed')).toBe('false')
   })
+
+  it('hovering a pip fills it and every pip before it', async () => {
+    const w = mount(StarRating, { props: { value: null } })
+    await w.findAll('[data-test="star"]')[3].trigger('mouseenter')
+    const stars = w.findAll('[data-test="star"]')
+    expect(w.findAll('[data-test="star"].filled')).toHaveLength(4)
+    expect(stars[3].classes()).toContain('filled')
+    expect(stars[4].classes()).not.toContain('filled')
+  })
+
+  it('hover previews over the saved value and reverts on leave', async () => {
+    const w = mount(StarRating, { props: { value: 7 } })
+    await w.findAll('[data-test="star"]')[2].trigger('mouseenter')
+    expect(w.findAll('[data-test="star"].filled')).toHaveLength(3)
+    await w.find('.star-row').trigger('mouseleave')
+    expect(w.findAll('[data-test="star"].filled')).toHaveLength(7)
+  })
+
+  it('disabled ignores hover', async () => {
+    const w = mount(StarRating, { props: { value: 2, disabled: true } })
+    await w.findAll('[data-test="star"]')[8].trigger('mouseenter')
+    expect(w.findAll('[data-test="star"].filled')).toHaveLength(2)
+  })
 })

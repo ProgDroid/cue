@@ -1,8 +1,18 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
+
 const props = defineProps<{ value: number | null; disabled?: boolean }>()
 const emit = defineEmits<{ set: [n: number]; clear: [] }>()
 
 const STARS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+// While hovering, preview the rating the click would set (it replaces the saved value).
+const hovered = ref<number | null>(null)
+const shown = computed(() => hovered.value ?? props.value)
+
+function hover(n: number) {
+  if (!props.disabled) hovered.value = n
+}
 
 function click(n: number) {
   if (props.disabled) return
@@ -17,6 +27,7 @@ function click(n: number) {
     role="group"
     aria-label="Your rating"
     :class="{ 'star-row--disabled': props.disabled }"
+    @mouseleave="hovered = null"
   >
     <button
       v-for="n in STARS"
@@ -25,7 +36,8 @@ function click(n: number) {
       :disabled="props.disabled"
       :aria-label="`Rate ${n} out of 10`"
       :aria-pressed="props.value === n"
-      :class="['star', { filled: props.value !== null && n <= props.value }]"
+      :class="['star', { filled: shown !== null && n <= shown }]"
+      @mouseenter="hover(n)"
       @click="click(n)"
     >★</button>
   </div>
@@ -49,10 +61,6 @@ function click(n: number) {
 }
 
 .star.filled {
-  color: var(--star-filled, #f5c518);
-}
-
-.star:not(:disabled):hover {
   color: var(--star-filled, #f5c518);
 }
 
