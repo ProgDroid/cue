@@ -72,7 +72,10 @@ stateless bulk rule in §5.1 replaces it.)
 - **429:** aborts the MOTN run — the source fails as any MOTN error does today
   (scoped: its services keep their membership), remaining calls are skipped, and the
   warning includes the month's count.
-- **Seed back-off:** a failed seed records `motn.seed_failed_at`. While a seed is due
+- **Seed back-off:** a failed seed records `motn.seed_failed_at` — but only when the
+  failure is a 429 or happened after seed pages were requested; a catalog-resolution
+  failure (≤ 1 request) does not back off, so a network blip on a fresh install can retry
+  on the next run (final-review revision). While a seed is due
   and that is under **3 days** old, `fetch` returns an error ("seed back-off until …")
   **without any network call**. It deliberately does not return the cache: that would
   record an ok run and make the next delta start from the wrong time.
