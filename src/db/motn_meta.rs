@@ -49,7 +49,13 @@ pub fn now_unix() -> i64 {
 /// # Errors
 /// Returns an error if the write fails.
 pub async fn increment_requests(pool: &SqlitePool) -> anyhow::Result<()> {
-    let _ = pool; // RED stub
+    sqlx::query(
+        "INSERT INTO app_meta (key, value) VALUES (? || strftime('%Y-%m', 'now'), '1')
+         ON CONFLICT(key) DO UPDATE SET value = CAST(app_meta.value AS INTEGER) + 1",
+    )
+    .bind(REQUESTS_PREFIX)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
