@@ -412,7 +412,9 @@ async fn decide_mode(pool: &SqlitePool) -> anyhow::Result<SyncMode> {
 }
 
 /// Apply parsed `/changes` to the cache: upsert additions, delete removals, and
-/// drop single services from cached shows (deleting any left with none).
+/// drop single services from cached shows (deleting any left with none). A
+/// service removal for a show also in this run's additions is skipped: the
+/// addition's embedded detail is the show's current state.
 ///
 /// # Errors
 /// Returns an error if any cache write fails.
@@ -424,6 +426,10 @@ async fn apply_changes(pool: &SqlitePool, parsed: &ParsedChanges) -> anyhow::Res
         motn_cache::delete(pool, show_id).await?;
     }
     for (show_id, svc) in &parsed.service_removals {
+        // An addition in this run carries the show's current state: it wins.
+        if parsed.additions.iter().any(|(id, _)| id == show_id) {
+            continue;
+        }
         let Some(mut ct) = motn_cache::get(pool, show_id).await? else {
             continue;
         };
@@ -590,11 +596,12 @@ impl MotnClient {
     }
 
     /// Resolve `(catalogs_csv, services)` — never empty. Reuses the per-country
-    /// cache while it is under `CATALOGS_MAX_AGE_SECS` old (unless `force`, as on
-    /// a full seed); otherwise calls `/countries` and caches the (non-empty)
-    /// result. If `/countries` fails — HTTP error, unparseable body, or none of
-    /// the wanted services listed — a cached value is used with a warning. A 429
-    /// is never masked by the cache: it aborts the run.
+    /// cache while it is under `CATALOGS_MAX_AGE_SECS` old and lists every wanted
+    /// service (unless `force`, as on a full seed); otherwise calls `/countries`
+    /// and caches the (non-empty) result. If `/countries` fails — HTTP error,
+    /// unparseable body, or none of the wanted services listed — a cached value
+    /// is used with a warning. A 429 is never masked by the cache: it aborts the
+    /// run.
     ///
     /// # Errors
     /// Returns an error if `/countries` fails and no cached value exists, on a
@@ -603,7 +610,12 @@ impl MotnClient {
         let cached = self.cached_catalogs().await?;
         if !force {
             if let Some((catalogs, services, checked)) = &cached {
-                if motn_meta::now_unix().saturating_sub(*checked) < CATALOGS_MAX_AGE_SECS {
+                // A cached set lacking a wanted service is never fresh: re-check
+                // /countries every run so a shrunken result can't stick for 7 days.
+                let complete = WANTED.iter().all(|(w, _)| services.contains(w));
+                if complete
+                    && motn_meta::now_unix().saturating_sub(*checked) < CATALOGS_MAX_AGE_SECS
+                {
                     return Ok((catalogs.clone(), services.clone()));
                 }
             }
@@ -641,15 +653,20 @@ impl MotnClient {
     /// replace the cache. Zero shows is an error and leaves the cache untouched.
     ///
     /// # Errors
-    /// Returns an error if any step fails or the seed returns no shows.
-    async fn seed(&self) -> anyhow::Result<()> {
-        let (catalogs, services) = self.resolve_catalogs(true).await?;
-        let entries = self.seed_pages(&catalogs, &services).await?;
-        if entries.is_empty() {
-            anyhow::bail!("MOTN seed returned no shows");
-        }
-        tracing::info!("MOTN full seed: {} shows", entries.len());
-        motn_cache::replace_all(&self.pool, &entries).await
+    /// Returns `(error, spent)` if any step fails or the seed returns no shows.
+    /// `spent` is true once the first seed page request has been made (a failure
+    /// in catalog resolution before that spends no seed requests).
+    async fn seed(&self) -> Result<(), (anyhow::Error, bool)> {
+        let (catalogs, services) = self.resolve_catalogs(true).await.map_err(|e| (e, false))?;
+        let seed_pages = async {
+            let entries = self.seed_pages(&catalogs, &services).await?;
+            if entries.is_empty() {
+                anyhow::bail!("MOTN seed returned no shows");
+            }
+            tracing::info!("MOTN full seed: {} shows", entries.len());
+            motn_cache::replace_all(&self.pool, &entries).await
+        };
+        seed_pages.await.map_err(|e| (e, true))
     }
 
     /// Full pagination of `/shows/search/filters` → `(show_id, CachedTitle)` entries.
@@ -743,15 +760,19 @@ impl CatalogueSource for MotnClient {
                         anyhow::bail!("MOTN seed back-off until {until}");
                     }
                 }
-                if let Err(e) = self.seed().await {
-                    if let Err(we) = motn_meta::set_i64(
-                        &self.pool,
-                        motn_meta::SEED_FAILED_AT,
-                        motn_meta::now_unix(),
-                    )
-                    .await
-                    {
-                        tracing::error!("recording MOTN seed failure failed: {we:#}");
+                if let Err((e, spent)) = self.seed().await {
+                    // Back off only when the attempt spent seed requests or hit a
+                    // 429; a catalog-resolution failure costs ≤1 request per run.
+                    if spent || e.is::<RateLimited>() {
+                        if let Err(we) = motn_meta::set_i64(
+                            &self.pool,
+                            motn_meta::SEED_FAILED_AT,
+                            motn_meta::now_unix(),
+                        )
+                        .await
+                        {
+                            tracing::error!("recording MOTN seed failure failed: {we:#}");
+                        }
                     }
                     return Err(e);
                 }
@@ -770,12 +791,20 @@ impl CatalogueSource for MotnClient {
                     parsed.merge(page);
                 }
                 tracing::info!(
-                    "MOTN delta: +{} -{}",
+                    "MOTN delta: +{} -{} -{} service",
                     parsed.additions.len(),
-                    parsed.removals.len()
+                    parsed.removals.len(),
+                    parsed.service_removals.len()
                 );
                 apply_changes(&self.pool, &parsed).await?;
+                let all = motn_cache::load_all(&self.pool).await?;
+                if all.is_empty() {
+                    // Never Ok(empty): run_sync would reconcile both services to
+                    // nothing. The next run seeds (decide_mode sees an empty cache).
+                    anyhow::bail!("MOTN delta emptied the cache");
+                }
                 app_meta::set(&self.pool, motn_meta::LAST_MODE, "delta").await?;
+                return Ok(all);
             }
         }
 
@@ -1141,6 +1170,23 @@ mod tests {
         assert_eq!(titles[0].links.len(), 1);
         assert_eq!(titles[0].links[0].0, Service::Crunchyroll);
     }
+
+    #[tokio::test]
+    async fn service_removal_skipped_when_same_run_adds_the_show() {
+        // A detail-less `removed` (Disney) and a `new` with detail saying the show
+        // is on Disney in the same run: the addition is current state, keep Disney.
+        let (_dir, pool) = test_pool().await;
+        motn_cache::upsert(&pool, "x", &cached("X")).await.unwrap();
+        let parsed = ParsedChanges {
+            additions: vec![("x".to_string(), cached("X"))],
+            removals: vec![],
+            service_removals: vec![("x".to_string(), Service::Disney)],
+        };
+        apply_changes(&pool, &parsed).await.unwrap();
+        let titles = motn_cache::load_all(&pool).await.unwrap();
+        assert_eq!(titles.len(), 1, "show must survive");
+        assert_eq!(titles[0].services, vec![Service::Disney]);
+    }
 }
 
 /// `MotnClient::fetch` against a local fake MOTN server. Kept apart from `tests`
@@ -1488,6 +1534,97 @@ mod fetch_tests {
             hits.load(Ordering::SeqCst),
             3,
             "gb still resolves /countries"
+        );
+        assert_eq!(
+            app_meta::get(&pool, &catalogs_key("gb"))
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("disney,crunchyroll")
+        );
+    }
+
+    #[actix_web::test]
+    async fn countries_failure_before_any_seed_page_does_not_back_off() {
+        fn handler(p: &str) -> (u16, String) {
+            if p.starts_with("/countries") {
+                (500, String::new())
+            } else {
+                standard(p)
+            }
+        }
+        let (_dir, pool) = test_pool().await;
+        let (base, hits) = fake_motn(handler).await;
+        assert!(client(&pool, "gb", base).fetch().await.is_err());
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "only /countries was tried");
+        assert!(
+            get_i64(&pool, SEED_FAILED_AT).await.unwrap().unwrap_or(0) == 0,
+            "no seed page was requested, so no back-off"
+        );
+    }
+
+    #[actix_web::test]
+    async fn countries_429_on_a_seed_backs_off() {
+        fn handler(p: &str) -> (u16, String) {
+            if p.starts_with("/countries") {
+                (429, String::new())
+            } else {
+                standard(p)
+            }
+        }
+        let (_dir, pool) = test_pool().await;
+        let (base, _hits) = fake_motn(handler).await;
+        let err = client(&pool, "gb", base).fetch().await.unwrap_err();
+        assert!(err.downcast_ref::<RateLimited>().is_some(), "got {err:#}");
+        assert!(get_i64(&pool, SEED_FAILED_AT).await.unwrap().unwrap() > 0);
+    }
+
+    #[actix_web::test]
+    async fn delta_that_empties_the_cache_is_an_error() {
+        fn handler(p: &str) -> (u16, String) {
+            if p.starts_with("/changes") && p.contains("change_type=removed") {
+                (
+                    200,
+                    r#"{"changes":[{"changeType":"removed","itemType":"show","showId":"old"}],
+                        "shows":{},"hasMore":false}"#
+                        .into(),
+                )
+            } else {
+                standard(p)
+            }
+        }
+        let (_dir, pool) = test_pool().await;
+        make_delta_ready(&pool).await;
+        app_meta::set(&pool, &catalogs_key("gb"), "disney,crunchyroll")
+            .await
+            .unwrap();
+        set_i64(&pool, &catalogs_checked_key("gb"), now_unix() - 60)
+            .await
+            .unwrap();
+        let (base, _hits) = fake_motn(handler).await;
+        let err = client(&pool, "gb", base).fetch().await.unwrap_err();
+        assert!(
+            format!("{err:#}").contains("emptied the cache"),
+            "got {err:#}"
+        );
+    }
+
+    #[actix_web::test]
+    async fn cached_catalogs_missing_a_service_are_rechecked() {
+        let (_dir, pool) = test_pool().await;
+        make_delta_ready(&pool).await;
+        app_meta::set(&pool, &catalogs_key("gb"), "disney")
+            .await
+            .unwrap();
+        set_i64(&pool, &catalogs_checked_key("gb"), now_unix() - 3600)
+            .await
+            .unwrap();
+        let (base, hits) = fake_motn(standard).await;
+        client(&pool, "gb", base).fetch().await.unwrap();
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            3,
+            "/countries re-checked + 2 changes"
         );
         assert_eq!(
             app_meta::get(&pool, &catalogs_key("gb"))

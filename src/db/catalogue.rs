@@ -42,13 +42,18 @@ pub fn new_since_map(added: &[(i64, i64)], now: i64) -> HashMap<i64, i64> {
     out
 }
 
-/// Load `added_at` for every title and apply [`new_since_map`].
+/// Load `added_at` for every title and apply [`new_since_map`]. A row whose
+/// `added_at` does not parse (NULL timestamp) is skipped, never new.
 async fn load_new_since(pool: &SqlitePool, now: i64) -> anyhow::Result<HashMap<i64, i64>> {
-    let added = sqlx::query_as::<_, (i64, i64)>(
+    let rows = sqlx::query_as::<_, (i64, Option<i64>)>(
         "SELECT id, CAST(strftime('%s', added_at) AS INTEGER) FROM titles",
     )
     .fetch_all(pool)
     .await?;
+    let added: Vec<(i64, i64)> = rows
+        .into_iter()
+        .filter_map(|(id, t)| t.map(|t| (id, t)))
+        .collect();
     Ok(new_since_map(&added, now))
 }
 
@@ -298,6 +303,25 @@ mod tests {
             "a membership without a link must not be watchable; got {:?}",
             dto.watchable
         );
+    }
+
+    #[actix_web::test]
+    async fn malformed_added_at_does_not_fail_the_catalogue() {
+        let (pool, _dir) = seeded_pool().await;
+        sqlx::query("UPDATE titles SET added_at = 'garbage' WHERE id = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let list = super::fetch_catalogue(&pool).await.unwrap();
+        let bad = list.iter().find(|t| t.id == 1).unwrap();
+        assert_eq!(bad.new_since, None, "unparseable added_at is never new");
+        assert!(list.len() > 1, "the rest of the catalogue still loads");
+        let dto = fetch_title(&pool, 1).await.unwrap().unwrap();
+        assert_eq!(dto.new_since, None);
+        // The NULL is skipped, not read as epoch 0 (which a `now` near the
+        // epoch would otherwise report as "new since 0").
+        let map = super::load_new_since(&pool, 1_000).await.unwrap();
+        assert!(!map.contains_key(&1), "NULL added_at must be skipped");
     }
 }
 

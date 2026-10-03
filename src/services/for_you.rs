@@ -1,5 +1,10 @@
-//! "For you" scoring: a mean-centred, normalised vector set and per-candidate
-//! top-k scoring against the user's ratings. Pure: no I/O, no async.
+//! "For you" ranking: pure scoring plus a cached service.
+//!
+//! The scoring half is pure (no I/O, no async): a mean-centred, normalised
+//! vector set and per-candidate top-k scoring against the user's ratings.
+//! [`ForYouService`] wraps it with I/O: it loads embeddings and ratings from
+//! `SQLite`, ranks in `spawn_blocking`, and caches the vector set and the
+//! ranking keyed on a data fingerprint.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
