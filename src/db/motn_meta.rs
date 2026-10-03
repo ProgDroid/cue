@@ -9,9 +9,10 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::Serialize;
 use sqlx::SqlitePool;
 
-use crate::db::app_meta;
+use crate::db::{app_meta, motn_cache};
 
 /// Unix seconds of the last successful full seed.
 pub const LAST_SEED_AT: &str = "motn.last_seed_at";
@@ -21,6 +22,9 @@ pub const LAST_MODE: &str = "motn.last_mode";
 pub const SEED_FAILED_AT: &str = "motn.seed_failed_at";
 /// Prefix of the per-month request counter; the suffix is the UTC `YYYY-MM`.
 pub const REQUESTS_PREFIX: &str = "motn.requests.";
+
+/// Movie-of-the-Night free-tier request budget per month (spec §11).
+pub const MOTN_MONTHLY_LIMIT: i64 = 500;
 
 /// Key holding the cached catalog ids (`"disney,crunchyroll"`) for `country`.
 #[must_use]
@@ -90,6 +94,41 @@ pub async fn get_i64(pool: &SqlitePool, key: &str) -> anyhow::Result<Option<i64>
 /// Returns an error if the write fails.
 pub async fn set_i64(pool: &SqlitePool, key: &str, v: i64) -> anyhow::Result<()> {
     app_meta::set(pool, key, &v.to_string()).await
+}
+
+/// MOTN cache + request state shown on `/api/sync/status`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MotnStatus {
+    pub cache_size: i64,
+    pub last_mode: Option<String>,
+    pub last_seed_at: Option<i64>,
+    pub seed_failed_at: Option<i64>,
+    pub catalogs_checked_at: Option<i64>,
+    pub requests_this_month: i64,
+    pub monthly_limit: i64,
+}
+
+/// Collect the MOTN status. `country` selects which per-country catalogs
+/// timestamp to report; `None` (unknown country) reports no timestamp.
+///
+/// # Errors
+/// Returns an error if any underlying query fails.
+pub async fn status(pool: &SqlitePool, country: Option<&str>) -> anyhow::Result<MotnStatus> {
+    let catalogs_checked_at = match country {
+        Some(c) => get_i64(pool, &catalogs_checked_key(c)).await?,
+        None => None,
+    };
+    Ok(MotnStatus {
+        cache_size: motn_cache::count(pool).await?,
+        last_mode: app_meta::get(pool, LAST_MODE).await?,
+        last_seed_at: get_i64(pool, LAST_SEED_AT).await?,
+        // `0` means "no failure outstanding" (cleared once a seed succeeds).
+        seed_failed_at: get_i64(pool, SEED_FAILED_AT).await?.filter(|&t| t != 0),
+        catalogs_checked_at,
+        requests_this_month: requests_this_month(pool).await?,
+        monthly_limit: MOTN_MONTHLY_LIMIT,
+    })
 }
 
 #[cfg(test)]

@@ -263,6 +263,12 @@ impl SyncRunner {
         })
     }
 
+    /// Whether a source with this client name (e.g. `"motn"`) is configured.
+    #[must_use]
+    pub fn has_source(&self, name: &str) -> bool {
+        self.sources.iter().any(|s| s.name() == name)
+    }
+
     #[must_use]
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
