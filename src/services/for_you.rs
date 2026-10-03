@@ -226,9 +226,10 @@ struct Cache {
     result: Option<(ResultKey, ForYouResult)>,
 }
 
-/// Computes and caches "For you" rankings. Cheap cache-key queries run on every
-/// call; embeddings are reloaded only when the vector key changes and the ranking
-/// is recomputed only when the result key changes.
+/// Computes and caches "For you" rankings.
+///
+/// Cheap cache-key queries run on every call; embeddings are reloaded only when the
+/// vector key changes and the ranking is recomputed only when the result key changes.
 #[derive(Default)]
 pub struct ForYouService {
     cache: Mutex<Cache>,
@@ -285,6 +286,7 @@ impl ForYouService {
         let result = tokio::task::spawn_blocking(move || rank(&set, &ratings, &excluded)).await?;
         self.computations.fetch_add(1, Ordering::Relaxed);
         cache.result = Some((key, result.clone()));
+        drop(cache);
         Ok(result)
     }
 }
