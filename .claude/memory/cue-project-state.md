@@ -1,11 +1,22 @@
 ---
 name: cue-project-state
-description: "cue media-discovery app — 5-plan build sequence, current phase, and deferred follow-ups"
+description: "cue media-discovery app — current state (latest first: sort orders Phase 1 merged 2026-10-03, Phase 2 gated on homelab checks), build history, deferred follow-ups"
 metadata: 
   node_type: memory
   type: project
   originSessionId: 17f78187-c481-45ff-a486-d12781742a6f
 ---
+
+## Latest (2026-10-03) — sort orders Phase 1 merged to main
+
+- **Shipped** (merge `0996e6a`): Relevance sort (auto-selected when an Ask/More-like/refine answer starts; restores the browse sort on clear — the old no-op "trending" was what kept answers in engine order); Trending = titles new in the last 30 days (stateless rule: `added_at` ≤30d AND <300 titles added within ±30 min, so seeds/bulk imports never count) → external rating; **For you** = top-k (k=5) plain-cosine neighbours among liked titles over mean-centred embeddings, rating-weighted, minus λ=0.5 × closest dislike, cached `ForYouService` + `GET /api/for-you`, needs ≥3 likes; MOTN request accounting (`motn.requests.YYYY-MM` counter in app_meta, 429 aborts the run, 3-day seed back-off only after seed pages were requested or on 429, per-country catalogs reuse 7d); `motn` block on `/api/sync/status` + Settings line; similar-titles strip now uses `/api/ask/similar`; MOTN `removed` changes drop only that service.
+- **Phase 2 is gated, not scheduled:** popularity tier for Trending (MOTN `order_by=popularity_1week`, top 60, every 3 days) only after ~2 weeks of real `requestsThisMonth` show headroom for a re-seed; **Leaving soon** (badge + filter from a `/changes?change_type=expiring` snapshot) only if a live request shows MOTN has *dated* UK Disney+/Crunchyroll expiries. Both checks + For you constant tuning (measure raw vs centred cosine spread) + recompute timing are listed in `docs/superpowers/deferred-followups.md` → "Sort orders (2026-10-03)", together with every deferred minor.
+- **Live checks need the homelab session** (the user's deployed instance); the cloud sandbox has no MOTN key and its egress blocks `api.movieofthenight.com` and `docs.movieofthenight.com`. For MOTN API facts use the OpenAPI spec at `raw.githubusercontent.com/movieofthenight/streaming-availability-api/main/openapi.yaml` (reachable).
+- Spec `docs/superpowers/specs/2026-10-02-cue-sort-orders-design.md` (4 revisions after red-team reviews in `docs/superpowers/reviews/`), plan `docs/superpowers/plans/2026-10-03-sort-orders-phase1.md`.
+
+**Why:** Phase 2 must not be started on assumption — both gates exist because the 500-request/month MOTN budget and the expiry data were unverified. **How to apply:** in the homelab session, run the four checks first; only then brainstorm/plan Phase 2.
+
+## History (older entries below)
 
 cue is a self-hosted personal media-discovery app (Rust/Actix/SQLx/SQLite backend + Vue 3 frontend, single Docker container). Built as a 5-plan sequence. As of **2026-06-21, Plan 1 (Backend Foundation) is complete and merged to `main`** (commit `fe1ad3a`; whole-branch Opus review = READY TO MERGE, `cargo test` 10/10, clippy `-D warnings` clean).
 
