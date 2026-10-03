@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useCatalogueStore } from '@/stores/catalogue'
+import { useCatalogueStore, type SortKey } from '@/stores/catalogue'
 import { services } from '@/design/tokens'
 import type { ServiceKey } from '@/types'
 
@@ -53,7 +53,7 @@ const selectedGenre = computed({
 })
 const selectedSort = computed({
   get: () => store.sort,
-  set: (v: 'trending' | 'rating' | 'year' | 'az') => store.setSort(v),
+  set: (v: SortKey) => store.setSort(v),
 })
 const selectedRating = computed({
   get: () => store.minRating,
