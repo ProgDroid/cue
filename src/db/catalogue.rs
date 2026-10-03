@@ -1,8 +1,65 @@
 use std::collections::{HashMap, HashSet};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use sqlx::SqlitePool;
 
 use crate::models::{Service, TitleDto, TitleKind, TitleListItem, TitleListRow, TitleRow};
+
+/// A title is "new" for this long after it was added.
+const NEW_WINDOW_SECS: i64 = 30 * 86_400;
+/// This many additions inside one `BULK_WINDOW_SECS` neighbourhood is a bulk
+/// insert (initial import / re-sync), not genuinely new releases.
+const BULK_THRESHOLD: usize = 300;
+/// Half-width of the neighbourhood used to detect a bulk insert.
+const BULK_WINDOW_SECS: i64 = 1_800;
+
+/// Which titles are "new", as `title_id -> added_at` (unix secs).
+///
+/// Stateless rule: a title is new when it was added within `NEW_WINDOW_SECS`
+/// of `now` and was not part of a bulk insert, i.e. fewer than
+/// `BULK_THRESHOLD` titles (itself included) were added within
+/// `±BULK_WINDOW_SECS` of it. `added` is `(title_id, added_at_unix)`.
+#[must_use]
+pub fn new_since_map(added: &[(i64, i64)], now: i64) -> HashMap<i64, i64> {
+    let mut sorted: Vec<(i64, i64)> = added.to_vec();
+    sorted.sort_unstable_by_key(|&(_, t)| t);
+
+    let mut out = HashMap::new();
+    // Two pointers over the sorted timestamps: `lo..hi` is the slice of rows
+    // within `[t - BULK_WINDOW_SECS, t + BULK_WINDOW_SECS]` of the current row.
+    let (mut lo, mut hi) = (0_usize, 0_usize);
+    for &(id, t) in &sorted {
+        while sorted[lo].1 < t - BULK_WINDOW_SECS {
+            lo += 1;
+        }
+        while hi < sorted.len() && sorted[hi].1 <= t + BULK_WINDOW_SECS {
+            hi += 1;
+        }
+        if now - t <= NEW_WINDOW_SECS && hi - lo < BULK_THRESHOLD {
+            out.insert(id, t);
+        }
+    }
+    out
+}
+
+/// Load `added_at` for every title and apply [`new_since_map`].
+async fn load_new_since(pool: &SqlitePool, now: i64) -> anyhow::Result<HashMap<i64, i64>> {
+    let added = sqlx::query_as::<_, (i64, i64)>(
+        "SELECT id, CAST(strftime('%s', added_at) AS INTEGER) FROM titles",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(new_since_map(&added, now))
+}
+
+/// Current unix time in seconds (0 if the clock is before the epoch).
+fn unix_now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_secs()).ok())
+        .unwrap_or(0)
+}
 
 /// Fetch every title in the slim list shape (services, genres, user-data; no
 /// `desc`/`cast`).
@@ -47,6 +104,8 @@ pub async fn fetch_catalogue(pool: &SqlitePool) -> anyhow::Result<Vec<TitleListI
         .await?;
     let watched_set: HashSet<String> = watched.into_iter().collect();
 
+    let new_since = load_new_since(pool, unix_now()).await?;
+
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
         let kind = TitleKind::parse(&r.kind).unwrap_or(TitleKind::Movie);
@@ -66,6 +125,7 @@ pub async fn fetch_catalogue(pool: &SqlitePool) -> anyhow::Result<Vec<TitleListI
             len: r.length,
             watched,
             rating,
+            new_since: new_since.get(&r.id).copied(),
         });
     }
     Ok(out)
@@ -149,6 +209,8 @@ pub async fn fetch_title(pool: &SqlitePool, id: i64) -> anyhow::Result<Option<Ti
         (false, None)
     };
 
+    let new_since = load_new_since(pool, unix_now()).await?.get(&id).copied();
+
     let kind = TitleKind::parse(&r.kind).unwrap_or(TitleKind::Movie);
     Ok(Some(TitleDto {
         id: r.id,
@@ -166,6 +228,7 @@ pub async fn fetch_title(pool: &SqlitePool, id: i64) -> anyhow::Result<Option<Ti
         watched,
         rating,
         watchable,
+        new_since,
     }))
 }
 
@@ -235,5 +298,71 @@ mod tests {
             "a membership without a link must not be watchable; got {:?}",
             dto.watchable
         );
+    }
+}
+
+#[cfg(test)]
+mod new_since_tests {
+    use super::new_since_map;
+
+    const NOW: i64 = 1_760_000_000;
+
+    #[test]
+    fn lone_recent_addition_is_new() {
+        let m = new_since_map(&[(1, NOW - 86_400)], NOW);
+        assert_eq!(m.get(&1), Some(&(NOW - 86_400)));
+    }
+
+    #[test]
+    fn exactly_30_days_old_is_still_new() {
+        let m = new_since_map(&[(1, NOW - 30 * 86_400)], NOW);
+        assert!(m.contains_key(&1));
+    }
+
+    #[test]
+    fn older_than_30_days_is_not_new() {
+        assert!(new_since_map(&[(1, NOW - 30 * 86_400 - 1)], NOW).is_empty());
+    }
+
+    #[test]
+    fn burst_of_300_within_30_minutes_is_bulk() {
+        let rows: Vec<(i64, i64)> = (0..300).map(|i| (i, NOW - 3_600 + i)).collect();
+        assert!(new_since_map(&rows, NOW).is_empty());
+    }
+
+    #[test]
+    fn burst_of_299_is_new() {
+        let rows: Vec<(i64, i64)> = (0..299).map(|i| (i, NOW - 3_600 + i)).collect();
+        assert_eq!(new_since_map(&rows, NOW).len(), 299);
+    }
+
+    #[test]
+    fn window_is_plus_minus_1800_seconds_inclusive() {
+        // 299 at t, plus one at t+1800 (inside) -> 300 within ±1800 of t -> bulk;
+        // one at t+1801 would be outside.
+        let t = NOW - 7_200;
+        let mut rows: Vec<(i64, i64)> = (0..299).map(|i| (i, t)).collect();
+        rows.push((999, t + 1_800));
+        assert!(!new_since_map(&rows, NOW).contains_key(&0));
+    }
+
+    #[test]
+    fn row_just_outside_the_window_does_not_make_a_bulk() {
+        let t = NOW - 7_200;
+        let mut rows: Vec<(i64, i64)> = (0..299).map(|i| (i, t)).collect();
+        rows.push((999, t + 1_801));
+        let m = new_since_map(&rows, NOW);
+        assert!(m.contains_key(&0));
+        assert!(m.contains_key(&999));
+    }
+
+    #[test]
+    fn old_bulk_does_not_hide_a_lone_recent_addition() {
+        // 300 rows long ago (bulk, and also stale) plus one fresh row far away.
+        let mut rows: Vec<(i64, i64)> = (0..300).map(|i| (i, NOW - 90 * 86_400 + i)).collect();
+        rows.push((999, NOW - 86_400));
+        let m = new_since_map(&rows, NOW);
+        assert_eq!(m.len(), 1);
+        assert!(m.contains_key(&999));
     }
 }

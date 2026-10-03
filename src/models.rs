@@ -105,6 +105,9 @@ pub struct TitleDto {
     pub rating: Option<i64>,
     /// Services that resolve to a working watch link (availability only — no URLs).
     pub watchable: Vec<String>,
+    /// Unix seconds when the title was added, if it counts as "new"; else null.
+    #[serde(rename = "newSince")]
+    pub new_since: Option<i64>,
 }
 
 /// Slim list shape: `TitleDto` minus the DetailView-only `desc`/`cast`.
@@ -125,6 +128,9 @@ pub struct TitleListItem {
     pub len: String,
     pub watched: bool,
     pub rating: Option<i64>,
+    /// Unix seconds when the title was added, if it counts as "new"; else null.
+    #[serde(rename = "newSince")]
+    pub new_since: Option<i64>,
 }
 
 #[cfg(test)]
@@ -149,6 +155,7 @@ mod tests {
             watched: false,
             rating: None,
             watchable: vec![],
+            new_since: Some(1_760_000_000),
         };
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["type"], "movie");
@@ -157,6 +164,7 @@ mod tests {
         assert_eq!(v["score"], 8.0);
         assert_eq!(v["anilistScore"], serde_json::Value::Null);
         assert_eq!(v["rating"], serde_json::Value::Null);
+        assert_eq!(v["newSince"], 1_760_000_000);
     }
 
     #[test]

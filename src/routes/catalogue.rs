@@ -75,6 +75,33 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn title_detail_carries_new_since() {
+        let (pool, _dir) = seeded_pool().await;
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(pool))
+                .configure(routes::configure),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/api/titles/1").to_request();
+        let body: Value = test::call_and_read_body_json(&app, req).await;
+        assert!(
+            body.get("newSince").is_some(),
+            "detail must carry newSince (null or unix secs)"
+        );
+
+        let req = test::TestRequest::get().uri("/api/catalogue").to_request();
+        let list: Value = test::call_and_read_body_json(&app, req).await;
+        for item in list.as_array().unwrap() {
+            assert!(
+                item.get("newSince").is_some(),
+                "list item must carry newSince"
+            );
+        }
+    }
+
+    #[actix_web::test]
     async fn title_detail_unknown_id_is_404() {
         let (pool, _dir) = seeded_pool().await;
         let app = test::init_service(
