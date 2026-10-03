@@ -316,7 +316,7 @@ mod tests {
         let c = [1.0_f32, 0.0];
         let (a, b) = (at_cos(0.8), at_cos(0.4));
         let score = candidate_score(&c, &[(&a, 1.0), (&b, 0.25)], &[]);
-        let expected = (0.8 + 0.25 * 0.4) / 1.25;
+        let expected = 0.25_f32.mul_add(0.4, 0.8) / 1.25;
         assert!((score - expected).abs() < 1e-5);
     }
 
