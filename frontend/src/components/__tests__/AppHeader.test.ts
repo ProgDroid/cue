@@ -33,4 +33,15 @@ describe('AppHeader', () => {
     expect(spy).toHaveBeenCalledTimes(1)
     expect(spy).toHaveBeenCalledWith('alien')
   })
+
+  it('drops a pending debounced query when unmounted', async () => {
+    vi.useFakeTimers()
+    const s = useCatalogueStore()
+    const spy = vi.spyOn(s, 'setQuery')
+    const w = mount(AppHeader)
+    await w.find('[data-test="search"]').setValue('alien')
+    w.unmount()
+    vi.advanceTimersByTime(200)
+    expect(spy).not.toHaveBeenCalled()
+  })
 })

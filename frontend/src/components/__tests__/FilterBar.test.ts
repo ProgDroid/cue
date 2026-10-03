@@ -1,11 +1,17 @@
-import { mount } from '@vue/test-utils'
-import { describe, it, expect, beforeEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import FilterBar from '../FilterBar.vue'
 import { useCatalogueStore } from '@/stores/catalogue'
 import type { Title } from '@/types'
 
-beforeEach(() => setActivePinia(createPinia()))
+vi.mock('@/api/forYou', () => ({ getForYou: vi.fn() }))
+import { getForYou } from '@/api/forYou'
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+  vi.clearAllMocks()
+})
 
 /** Minimal but fully-shaped Title stub — satisfies all store getters. */
 function t(id: number): Title {
@@ -22,6 +28,7 @@ function t(id: number): Title {
     len: '',
     watched: false,
     rating: null,
+    newSince: null,
   }
 }
 
@@ -59,5 +66,99 @@ describe('FilterBar', () => {
     expect(w.get('[data-test="genre-select"]').attributes('aria-label')).toBe('Filter by genre')
     expect(w.get('[data-test="sort-select"]').attributes('aria-label')).toBe('Sort by')
     expect(w.get('[data-test="rating-select"]').attributes('aria-label')).toBe('Filter by minimum rating')
+  })
+
+  describe('sort menu', () => {
+    const sortOpts = (w: ReturnType<typeof mount>) =>
+      w.get('[data-test="sort-select"]').findAll('option')
+
+    it('browse mode lists Trending, For you, Top rated, Newest, A–Z (no Relevance)', () => {
+      const w = mount(FilterBar)
+      expect(sortOpts(w).map(o => o.text())).toEqual(['Trending', 'For you', 'Top rated', 'Newest', 'A–Z'])
+      expect(sortOpts(w).map(o => o.element.value)).toEqual(['trending', 'foryou', 'rating', 'year', 'az'])
+    })
+
+    it('answer mode adds Relevance as the first option', () => {
+      const s = useCatalogueStore()
+      s.answerActive = true
+      s.sort = 'relevance'
+      const w = mount(FilterBar)
+      const opts = sortOpts(w)
+      expect(opts.map(o => o.text())).toEqual(['Relevance', 'Trending', 'For you', 'Top rated', 'Newest', 'A–Z'])
+      expect(opts[0].element.value).toBe('relevance')
+      expect((w.get('[data-test="sort-select"]').element as HTMLSelectElement).value).toBe('relevance')
+    })
+
+    const forYouOpt = (w: ReturnType<typeof mount>) =>
+      w.get('option[value="foryou"]').element as HTMLOptionElement
+
+    it('For you is disabled with the unlock hint when ready below basis 3', () => {
+      const s = useCatalogueStore()
+      s.forYou = { status: 'ready', ids: [], basis: 2 }
+      const w = mount(FilterBar)
+      expect(forYouOpt(w).disabled).toBe(true)
+      expect(w.get('[data-test="foryou-hint"]').text()).toBe('Rate 3+ titles you liked to unlock For you')
+    })
+
+    it('while the first load is in flight For you is disabled with no hint', async () => {
+      const s = useCatalogueStore()
+      const w = mount(FilterBar)
+      expect(s.forYou.status).toBe('idle')
+      expect(forYouOpt(w).disabled).toBe(true)
+      expect(w.find('[data-test="foryou-hint"]').exists()).toBe(false)
+      vi.mocked(getForYou).mockReturnValue(new Promise(() => {}))
+      void s.loadForYou()
+      await flushPromises()
+      expect(s.forYou.status).toBe('loading')
+      expect(forYouOpt(w).disabled).toBe(true)
+      expect(w.find('[data-test="foryou-hint"]').exists()).toBe(false)
+      expect(w.find('[data-test="foryou-error"]').exists()).toBe(false)
+    })
+
+    it('a failed first fetch shows retry and no unlock hint, and retry recovers', async () => {
+      const s = useCatalogueStore()
+      vi.mocked(getForYou).mockRejectedValueOnce(new Error('down'))
+      await s.loadForYou()
+      const w = mount(FilterBar)
+      expect(s.sort).toBe('trending')
+      expect(w.find('[data-test="foryou-hint"]').exists()).toBe(false)
+      const err = w.get('[data-test="foryou-error"]')
+      expect(err.text()).toBe('For you unavailable — retry')
+      vi.mocked(getForYou).mockResolvedValueOnce({ ids: [], basis: 5 })
+      await err.trigger('click')
+      await flushPromises()
+      expect(s.forYou.status).toBe('ready')
+      expect(forYouOpt(w).disabled).toBe(false)
+      expect(w.find('[data-test="foryou-error"]').exists()).toBe(false)
+      expect(w.find('[data-test="foryou-hint"]').exists()).toBe(false)
+    })
+
+    it('For you is enabled and the hint hidden at basis 3', () => {
+      const s = useCatalogueStore()
+      s.forYou = { status: 'ready', ids: [], basis: 3 }
+      const w = mount(FilterBar)
+      expect((w.get('option[value="foryou"]').element as HTMLOptionElement).disabled).toBe(false)
+      expect(w.find('[data-test="foryou-hint"]').exists()).toBe(false)
+    })
+
+    it('shows "For you unavailable — retry" when for-you errored with For you selected, and retry calls loadForYou', async () => {
+      const s = useCatalogueStore()
+      s.forYou = { status: 'error', ids: [], basis: 5 }
+      s.sort = 'foryou'
+      const spy = vi.spyOn(s, 'loadForYou').mockResolvedValue(undefined)
+      const w = mount(FilterBar)
+      const err = w.get('[data-test="foryou-error"]')
+      expect(err.text()).toBe('For you unavailable — retry')
+      await err.trigger('click')
+      expect(spy).toHaveBeenCalledTimes(1)
+    })
+
+    it('shows the error line even when For you is not the selected sort', () => {
+      const s = useCatalogueStore()
+      s.forYou = { status: 'error', ids: [], basis: 5 }
+      s.sort = 'trending'
+      const w = mount(FilterBar)
+      expect(w.get('[data-test="foryou-error"]').text()).toBe('For you unavailable — retry')
+    })
   })
 })

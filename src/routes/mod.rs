@@ -1,5 +1,6 @@
 pub mod ask;
 pub mod catalogue;
+pub mod for_you;
 pub mod images;
 pub mod import;
 pub mod sync;
@@ -18,6 +19,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/health", web::get().to(health))
             .route("/catalogue", web::get().to(catalogue::get_catalogue))
             .route("/titles/{id}", web::get().to(catalogue::get_title))
+            .route("/for-you", web::get().to(for_you::get_for_you))
             .route("/ask", web::post().to(ask::ask))
             .route("/ask/similar", web::post().to(ask::similar))
             .route("/ask/refine", web::post().to(ask::refine))

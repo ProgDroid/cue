@@ -14,6 +14,8 @@ export interface TitleListItem {
   len: string
   watched: boolean
   rating: number | null
+  /** Unix seconds when the title entered the catalogue within the "new" window; null otherwise. */
+  newSince: number | null
 }
 
 /** The dominant in-store shape is the slim list item. */
@@ -55,9 +57,23 @@ export interface LastRun {
   itemCount: number
   finishedAt: string | null
 }
+export interface MotnStatus {
+  cacheSize: number
+  lastMode: string | null
+  lastSeedAt: number | null
+  seedFailedAt: number | null
+  catalogsCheckedAt: number | null
+  requestsThisMonth: number
+  monthlyLimit: number
+}
+export interface ForYouResult {
+  ids: number[]
+  basis: number
+}
 export interface SyncStatus {
   running: boolean
   lastRun: LastRun | null
   sources: SourceRun[]
   catalogue: CatalogueStats
+  motn: MotnStatus | null
 }

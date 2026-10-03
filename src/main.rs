@@ -6,6 +6,7 @@ use cue::config::Config;
 use cue::services::anthropic::ClaudeAskModel;
 use cue::services::ask_engine::AskEngine;
 use cue::services::embeddings::{backfill, build_light_axis, OpenAiEmbedder};
+use cue::services::for_you::ForYouService;
 use cue::static_files::{serve_spa, StaticDir};
 
 #[actix_web::main]
@@ -73,13 +74,17 @@ async fn main() -> std::io::Result<()> {
         light_axis,
     ));
 
+    let for_you = Arc::new(ForYouService::new());
+
     // Assemble catalogue sources from configured credentials.
     let mut sources: Vec<Arc<dyn cue::sync::CatalogueSource>> = Vec::new();
+    let mut motn_country: Option<String> = None;
     if let (Some(url), Some(token)) = (cfg.plex_url.clone(), cfg.plex_token.clone()) {
         sources.push(Arc::new(cue::sync::plex::PlexClient::new(url, token)));
     }
     if let Some(key) = cfg.motn_api_key.clone() {
         let country = cfg.region.clone().unwrap_or_else(|| "gb".to_string());
+        motn_country = Some(country.clone());
         sources.push(Arc::new(cue::sync::motn::MotnClient::new(
             key,
             country,
@@ -134,9 +139,13 @@ async fn main() -> std::io::Result<()> {
     tracing::info!("listening on {bind_addr}");
 
     HttpServer::new(move || {
-        App::new()
-            .app_data(web::Data::new(pool.clone()))
+        let mut app = App::new();
+        if let Some(c) = &motn_country {
+            app = app.app_data(web::Data::new(cue::routes::sync::MotnCountry(c.clone())));
+        }
+        app.app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(engine.clone()))
+            .app_data(web::Data::new(for_you.clone()))
             .app_data(web::Data::new(runner.clone()))
             .app_data(web::Data::new(plex_art.clone()))
             .app_data(web::Data::new(watch_cfg.clone()))

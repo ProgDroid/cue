@@ -34,7 +34,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { onUnmounted, ref, watch } from 'vue'
 import { useCatalogueStore } from '@/stores/catalogue'
 import { debounce } from '@/composables/debounce'
 
@@ -45,6 +45,8 @@ const store = useCatalogueStore()
 const query = ref(store.query)
 const pushQuery = debounce((v: string) => store.setQuery(v), 120)
 watch(query, (v) => pushQuery(v))
+// Don't let a pending keystroke write to the store after unmount.
+onUnmounted(() => pushQuery.cancel())
 
 // Keep the box in sync if the query is reset elsewhere.
 watch(() => store.query, (v) => { if (v !== query.value) query.value = v })

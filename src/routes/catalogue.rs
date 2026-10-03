@@ -2,6 +2,7 @@ use actix_web::{web, HttpResponse, Responder};
 use sqlx::SqlitePool;
 
 use crate::db::catalogue::{fetch_catalogue, fetch_title};
+use crate::routes::watch::WatchConfig;
 
 pub async fn get_catalogue(pool: web::Data<SqlitePool>) -> impl Responder {
     match fetch_catalogue(pool.get_ref()).await {
@@ -13,10 +14,20 @@ pub async fn get_catalogue(pool: web::Data<SqlitePool>) -> impl Responder {
     }
 }
 
-pub async fn get_title(pool: web::Data<SqlitePool>, path: web::Path<i64>) -> impl Responder {
+pub async fn get_title(
+    pool: web::Data<SqlitePool>,
+    path: web::Path<i64>,
+    watch_cfg: Option<web::Data<WatchConfig>>,
+) -> impl Responder {
     let id = path.into_inner();
     match fetch_title(pool.get_ref(), id).await {
-        Ok(Some(dto)) => HttpResponse::Ok().json(dto),
+        Ok(Some(mut dto)) => {
+            // The Plex redirect needs PLEX_WEB_URL; without it the button would 404.
+            if watch_cfg.and_then(|c| c.plex_web_url.clone()).is_none() {
+                dto.watchable.retain(|s| s != "plex");
+            }
+            HttpResponse::Ok().json(dto)
+        }
         Ok(None) => HttpResponse::NotFound().finish(),
         Err(e) => {
             tracing::error!("title detail fetch failed: {e:#}");
@@ -61,6 +72,37 @@ mod tests {
         assert!(body["desc"].is_string(), "detail must carry desc");
         assert!(body["cast"].is_array(), "detail must carry cast");
         assert!(body["services"].is_array());
+    }
+
+    #[actix_web::test]
+    async fn title_detail_carries_new_since() {
+        let (pool, _dir) = seeded_pool().await;
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(pool))
+                .configure(routes::configure),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/api/titles/1").to_request();
+        let body: Value = test::call_and_read_body_json(&app, req).await;
+        // The seed adds 28 recent rows (< 300), so none is a bulk insert and
+        // every title must report a real unix timestamp, not null.
+        assert!(
+            body["newSince"].is_i64(),
+            "detail newSince must be a unix timestamp; got {}",
+            body["newSince"]
+        );
+
+        let req = test::TestRequest::get().uri("/api/catalogue").to_request();
+        let list: Value = test::call_and_read_body_json(&app, req).await;
+        for item in list.as_array().unwrap() {
+            assert!(
+                item["newSince"].is_i64(),
+                "list item newSince must be a unix timestamp; got {}",
+                item["newSince"]
+            );
+        }
     }
 
     #[actix_web::test]

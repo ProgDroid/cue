@@ -2,6 +2,7 @@ pub mod app_meta;
 pub mod catalogue;
 pub mod embeddings;
 pub mod motn_cache;
+pub mod motn_meta;
 pub mod seed;
 pub mod sync_runs;
 pub mod user_data;

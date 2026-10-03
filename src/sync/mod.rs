@@ -263,6 +263,12 @@ impl SyncRunner {
         })
     }
 
+    /// Whether a source with this client name (e.g. `"motn"`) is configured.
+    #[must_use]
+    pub fn has_source(&self, name: &str) -> bool {
+        self.sources.iter().any(|s| s.name() == name)
+    }
+
     #[must_use]
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
@@ -629,7 +635,7 @@ mod orchestrator_tests {
     }
 
     #[tokio::test]
-    async fn run_sync_persists_server_meta_non_fatally() {
+    async fn run_sync_persists_server_meta() {
         let (p, _dir) = pool().await;
         // A source that returns a server_meta pair (simulates Plex machineIdentifier).
         let src = Arc::new(MetaFake {

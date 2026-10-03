@@ -40,8 +40,10 @@ mod tests {
         (pool, dir)
     }
 
+    /// The production route table, so endpoint-scoped config (the 8 MB
+    /// `PayloadConfig`) is exercised rather than re-declared here.
     fn test_routes(cfg: &mut web::ServiceConfig) {
-        cfg.route("/api/import/ratings", web::post().to(import_ratings));
+        crate::routes::configure(cfg);
     }
 
     #[actix_web::test]
@@ -95,5 +97,54 @@ tt0000002,11,2021-05-06,Bad High\n";
         assert_eq!(resp.status(), 400);
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["error"], "no_ratings_found");
+    }
+
+    #[actix_web::test]
+    async fn non_utf8_body_is_400_invalid_utf8() {
+        let (pool, _dir) = fresh_pool().await;
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(pool))
+                .configure(test_routes),
+        )
+        .await;
+        let req = test::TestRequest::post()
+            .uri("/api/import/ratings")
+            .insert_header(("content-type", "text/csv"))
+            .set_payload(vec![0xff, 0xfe, 0x00, 0x80])
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 400);
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["error"], "invalid_utf8");
+    }
+
+    #[actix_web::test]
+    async fn body_over_actix_default_cap_is_accepted() {
+        // > 256 KB (actix's default Bytes cap): only passes if the production
+        // route's PayloadConfig is in effect.
+        let (pool, _dir) = fresh_pool().await;
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(pool))
+                .configure(test_routes),
+        )
+        .await;
+        let header = "Const,Your Rating,Date Rated,Title\n".to_string();
+        let csv = (0..12_000).fold(header, |mut acc, i| {
+            use std::fmt::Write as _;
+            let _ = writeln!(acc, "tt{i:07},7,2020-01-01,Some Reasonably Long Title {i}");
+            acc
+        });
+        assert!(csv.len() > 256 * 1024);
+        let req = test::TestRequest::post()
+            .uri("/api/import/ratings")
+            .insert_header(("content-type", "text/csv"))
+            .set_payload(csv)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["imported"], 12_000);
     }
 }

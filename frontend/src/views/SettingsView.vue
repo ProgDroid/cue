@@ -39,6 +39,7 @@
         <p data-test="stat-titles">{{ status.catalogue.titles }} titles</p>
         <p class="muted">{{ status.catalogue.movies }} movies · {{ status.catalogue.series }} series</p>
         <p class="muted">{{ status.catalogue.embedded }} embedded</p>
+        <p v-if="motnLine" class="muted" data-test="motn-line">{{ motnLine }}</p>
       </div>
 
       <div class="card">
@@ -60,7 +61,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { triggerSync, getSyncStatus } from '@/api/sync'
 import type { SyncStatus } from '@/types'
@@ -75,6 +76,32 @@ let poll: ReturnType<typeof setInterval> | undefined
 const importing = ref(false)
 const importMsg = ref('')
 const importError = ref('')
+
+// Mirrors backend SEED_BACKOFF_SECS: a failed MOTN seed is not retried for 3 days.
+const SEED_BACKOFF_SECS = 3 * 86_400
+
+const fmtNum = (n: number) => n.toLocaleString('en-GB')
+// "12 Sep" (UTC). Fixed month names: ICU's en-GB short month varies by version ("Sep"/"Sept").
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const fmtDate = (unixSecs: number) => {
+  const d = new Date(unixSecs * 1000)
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`
+}
+
+// `motn` may be null (MOTN unconfigured) or undefined (older server) — both hide the line.
+const motnLine = computed(() => {
+  const m = status.value?.motn
+  if (m == null) return ''
+  const parts = [`Cache ${fmtNum(m.cacheSize)} shows`]
+  if (m.lastSeedAt != null) parts.push(`last full seed ${fmtDate(m.lastSeedAt)}`)
+  if (m.lastMode) parts.push(m.lastMode)
+  if (m.seedFailedAt != null) {
+    const resumeAt = m.seedFailedAt + SEED_BACKOFF_SECS
+    if (resumeAt * 1000 > Date.now()) parts.push(`seed paused until ${fmtDate(resumeAt)}`)
+  }
+  parts.push(`${fmtNum(m.requestsThisMonth)} / ${fmtNum(m.monthlyLimit)} requests this month (approx.)`)
+  return parts.join(' · ')
+})
 
 // "1 rating" / "2 ratings" — naive English pluralization for the import summary.
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`

@@ -56,4 +56,27 @@ describe('useDelayedFlag', () => {
     await w.vm.$nextTick()
     expect(w.text()).toBe('off')
   })
+
+  it('accepts a getter source as well as a ref', async () => {
+    vi.useFakeTimers()
+    const state = ref(false)
+    const cmp = defineComponent({
+      setup() {
+        const flag = useDelayedFlag(() => state.value, 180)
+        return { flag }
+      },
+      render() {
+        return h('span', this.flag ? 'on' : 'off')
+      },
+    })
+    const w = mount(cmp)
+    state.value = true
+    await w.vm.$nextTick()
+    vi.advanceTimersByTime(180)
+    await w.vm.$nextTick()
+    expect(w.text()).toBe('on')
+    state.value = false
+    await w.vm.$nextTick()
+    expect(w.text()).toBe('off')
+  })
 })

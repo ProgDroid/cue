@@ -17,7 +17,7 @@ function makeDetail(over: Partial<TitleDetail> = {}): TitleDetail {
   return {
     id: 5, imdbId: 'tt0000005', title: 'Coco', year: 2017, services: ['disney'],
     type: 'movie', genres: ['Animation'], score: 8.4, anilistScore: null, len: '105 min',
-    desc: 'A boy and music.', cast: ['Anthony Gonzalez'], watched: false, rating: null,
+    desc: 'A boy and music.', cast: ['Anthony Gonzalez'], watched: false, rating: null, newSince: null,
     watchable: [],
     ...over,
   }

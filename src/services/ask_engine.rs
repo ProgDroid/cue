@@ -174,28 +174,25 @@ impl AskEngine {
     }
 
     async fn genre_overlap(&self, anchor_id: i64, pool_ids: &[i64]) -> anyhow::Result<Vec<i64>> {
-        let anchor_genres: Vec<String> =
-            sqlx::query_scalar("SELECT genre FROM title_genres WHERE title_id = ?")
-                .bind(anchor_id)
-                .fetch_all(&self.pool)
-                .await?;
-        let anchor_set: HashSet<String> = anchor_genres.into_iter().collect();
-        let all = sqlx::query_as::<_, (i64, String)>("SELECT title_id, genre FROM title_genres")
-            .fetch_all(&self.pool)
-            .await?;
-        let mut shared: HashMap<i64, i64> = HashMap::new();
-        for (tid, g) in all {
-            if anchor_set.contains(&g) {
-                *shared.entry(tid).or_default() += 1;
-            }
-        }
+        // Shared-genre count desc, then score desc (missing last), then id — a
+        // total order, so the same anchor always yields the same list.
+        let ranked: Vec<i64> = sqlx::query_scalar(
+            "SELECT g.title_id
+             FROM title_genres g JOIN titles t ON t.id = g.title_id
+             WHERE g.title_id != ?1
+               AND g.genre IN (SELECT genre FROM title_genres WHERE title_id = ?1)
+             GROUP BY g.title_id
+             ORDER BY COUNT(*) DESC, t.score IS NULL, t.score DESC, g.title_id",
+        )
+        .bind(anchor_id)
+        .fetch_all(&self.pool)
+        .await?;
         let want: HashSet<i64> = pool_ids.iter().copied().collect();
-        let mut scored: Vec<(i64, i64)> = shared
+        Ok(ranked
             .into_iter()
-            .filter(|(id, _)| *id != anchor_id && want.contains(id))
-            .collect();
-        scored.sort_by_key(|b| std::cmp::Reverse(b.1));
-        Ok(scored.into_iter().take(20).map(|(id, _)| id).collect())
+            .filter(|id| want.contains(id))
+            .take(20)
+            .collect())
     }
 
     async fn sort_by_runtime(&self, ids: &[i64]) -> anyhow::Result<Vec<i64>> {
@@ -488,6 +485,46 @@ mod tests {
         let answer = engine.similar(1, None).await.unwrap();
         assert!(!answer.ids.contains(&1), "anchor excluded");
         assert!(answer.line.contains("More like"));
+    }
+
+    #[tokio::test]
+    async fn genre_overlap_breaks_ties_by_score_then_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("test.db");
+        let url = format!("sqlite:{}", db.to_string_lossy().replace('\\', "/"));
+        let pool = init_pool(&url).await.unwrap();
+        // (id, score, genres) — id 1 is the anchor.
+        let rows: [(i64, Option<f64>, &[&str]); 6] = [
+            (1, Some(9.0), &["Drama", "Crime"]),
+            (2, Some(8.0), &["Drama", "Crime"]),
+            (3, Some(9.0), &["Drama", "Crime"]),
+            (4, Some(9.9), &["Drama"]),
+            (5, None, &["Drama", "Crime"]),
+            (6, Some(8.0), &["Drama", "Crime"]),
+        ];
+        for (id, score, genres) in rows {
+            sqlx::query(
+                "INSERT INTO titles (id, title, year, type, score) VALUES (?, ?, 2000, 'movie', ?)",
+            )
+            .bind(id)
+            .bind(format!("T{id}"))
+            .bind(score)
+            .execute(&pool)
+            .await
+            .unwrap();
+            for g in genres {
+                sqlx::query("INSERT INTO title_genres (title_id, genre) VALUES (?, ?)")
+                    .bind(id)
+                    .bind(g)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+        }
+        let engine = AskEngine::new(pool, None, None, None);
+        let answer = engine.similar(1, None).await.unwrap();
+        // shared-genre count desc, then score desc (missing last), then id asc.
+        assert_eq!(answer.ids, vec![3, 2, 6, 5, 4]);
     }
 
     #[test]

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { markRaw } from 'vue'
 import type { ServiceKey, Title, TitleKind, ThreadStep, AskResult } from '@/types'
 import { getCatalogue } from '@/api/client'
+import { getForYou } from '@/api/forYou'
 import { askService } from '@/services'
 import { setRating as apiSetRating, clearRating as apiClearRating, setWatched as apiSetWatched } from '@/api/userData'
 
@@ -15,7 +16,33 @@ export function externalRating(t: Title): number | null {
 type Status = 'idle' | 'loading' | 'ready' | 'error'
 type ServiceFilter = 'all' | ServiceKey
 type TypeFilter = 'all' | TitleKind
-type SortKey = 'trending' | 'rating' | 'year' | 'az'
+export type SortKey = 'relevance' | 'trending' | 'foryou' | 'rating' | 'year' | 'az'
+
+/** Minimum number of positively-rated/watched titles before "For you" is offered. */
+const FOR_YOU_MIN_BASIS = 3
+
+/** Monotonic id of the latest loadForYou call; responses from older calls are dropped. */
+let forYouSeq = 0
+
+/** Trending order: recently-new titles first (newest first), then best external rating, then id. */
+function byTrending(a: Title, b: Title): number {
+  if ((a.newSince != null) !== (b.newSince != null)) return a.newSince != null ? -1 : 1
+  if (a.newSince != null && b.newSince != null && a.newSince !== b.newSince) return b.newSince - a.newSince
+  const ra = externalRating(a)
+  const rb = externalRating(b)
+  if (ra !== rb) {
+    if (ra == null) return 1
+    if (rb == null) return -1
+    return rb - ra
+  }
+  return a.id - b.id
+}
+
+interface ForYouState {
+  status: Status
+  ids: number[]
+  basis: number
+}
 
 interface State {
   catalogue: Title[]
@@ -26,6 +53,9 @@ interface State {
   type: TypeFilter
   genre: 'all' | string
   sort: SortKey
+  /** The sort to restore when an answer is cleared. */
+  browseSort: SortKey
+  forYou: ForYouState
   minRating: number
   watched: Record<number, boolean>
   ratings: Record<number, number>
@@ -49,6 +79,8 @@ export const useCatalogueStore = defineStore('catalogue', {
     type: 'all',
     genre: 'all',
     sort: 'trending',
+    browseSort: 'trending',
+    forYou: { status: 'idle', ids: [], basis: 0 },
     minRating: 0,
     watched: {},
     ratings: {},
@@ -63,6 +95,14 @@ export const useCatalogueStore = defineStore('catalogue', {
   }),
 
   getters: {
+    /**
+     * For you can be selected. `basis` is the last good (ready) basis: 0 until the
+     * first ready response, and kept across reloads and failed reloads.
+     */
+    forYouAvailable: (state): boolean => state.forYou.basis >= FOR_YOU_MIN_BASIS,
+    /** A ready response says the basis is too small: show the unlock hint. */
+    forYouLocked: (state): boolean =>
+      state.forYou.status === 'ready' && state.forYou.basis < FOR_YOU_MIN_BASIS,
     isWatched: (state) => (id: number): boolean => !!state.watched[id],
     ratingOf: (state) => (id: number): number | null => state.ratings[id] ?? null,
     similar() {
@@ -107,7 +147,17 @@ export const useCatalogueStore = defineStore('catalogue', {
         case 'az': out.sort((a, b) => a.title.localeCompare(b.title)); break
         case 'year': out.sort((a, b) => b.year - a.year); break
         case 'rating': out.sort(byRating); break
-        case 'trending': /* keep base order */ break
+        case 'trending': out.sort(byTrending); break
+        case 'foryou': {
+          const rank = new Map<number, number>()
+          if (state.forYou.status === 'ready') state.forYou.ids.forEach((id, i) => rank.set(id, i))
+          const isRanked = (t: Title) => rank.has(t.id) && !state.watched[t.id] && state.ratings[t.id] == null
+          const ranked = out.filter(isRanked).sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0))
+          const rest = out.filter(t => !isRanked(t)).sort(byTrending)
+          out = ranked.concat(rest)
+          break
+        }
+        case 'relevance': /* keep base order */ break
       }
       return out
     },
@@ -129,6 +179,7 @@ export const useCatalogueStore = defineStore('catalogue', {
       try {
         const r = await apiSetWatched(id, next)
         this.watched[id] = r.watched // reconcile to server truth
+        void this.loadForYou()
       } catch (e) {
         this.watched[id] = prev // rollback
         this.userDataError = e instanceof Error ? e.message : 'Could not update watched state.'
@@ -142,6 +193,7 @@ export const useCatalogueStore = defineStore('catalogue', {
       try {
         const r = await apiSetRating(id, n)
         if (r.rating != null) this.ratings[id] = r.rating
+        void this.loadForYou()
       } catch (e) {
         if (prev == null) delete this.ratings[id]
         else this.ratings[id] = prev
@@ -155,6 +207,7 @@ export const useCatalogueStore = defineStore('catalogue', {
       delete this.ratings[id] // optimistic
       try {
         await apiClearRating(id)
+        void this.loadForYou()
       } catch (e) {
         if (prev != null) this.ratings[id] = prev
         this.userDataError = e instanceof Error ? e.message : 'Could not clear rating.'
@@ -174,11 +227,37 @@ export const useCatalogueStore = defineStore('catalogue', {
       } catch (e) {
         this.error = e instanceof Error ? e.message : 'Failed to load catalogue'
         this.status = 'error'
+        return
+      }
+      void this.loadForYou()
+    },
+
+    /** Fetch the For-you ranking. Never throws; a newer call supersedes older in-flight ones. */
+    async loadForYou() {
+      const seq = ++forYouSeq
+      if (this.forYou.status !== 'ready') this.forYou.status = 'loading'
+      try {
+        const r = await getForYou()
+        if (seq !== forYouSeq) return
+        this.forYou = { status: 'ready', ids: r.ids, basis: r.basis }
+        if (this.sort === 'foryou' && r.basis < FOR_YOU_MIN_BASIS)
+          this.sort = this.browseSort === 'foryou' ? 'trending' : this.browseSort
+      } catch {
+        if (seq !== forYouSeq) return
+        this.forYou.status = 'error' // keep the previous ids
       }
     },
 
-    applyResult(label: string, r: AskResult) {
+    enterAnswer() {
+      if (!this.answerActive) {
+        this.browseSort = this.sort
+        this.sort = 'relevance'
+      }
       this.answerActive = true
+    },
+
+    applyResult(label: string, r: AskResult) {
+      this.enterAnswer()
       this.resultIds = r.ids
       this.line = r.line
       this.sub = r.sub
@@ -192,7 +271,7 @@ export const useCatalogueStore = defineStore('catalogue', {
         this.applyResult(q, await askService.ask(q, this.catalogue))
       } catch (e) {
         this.askError = e instanceof Error ? e.message : 'Ask is unavailable right now.'
-        this.answerActive = true
+        this.enterAnswer()
       } finally {
         this.resolving = false
       }
@@ -208,7 +287,7 @@ export const useCatalogueStore = defineStore('catalogue', {
         this.applyResult(`↻ ${kind}`, await askService.refine(kind, current))
       } catch (e) {
         this.askError = e instanceof Error ? e.message : 'Ask is unavailable right now.'
-        this.answerActive = true
+        this.enterAnswer()
       } finally {
         this.resolving = false
       }
@@ -221,7 +300,7 @@ export const useCatalogueStore = defineStore('catalogue', {
         this.applyResult(`≈ ${title.title}`, await askService.similar(title, this.catalogue))
       } catch (e) {
         this.askError = e instanceof Error ? e.message : 'Ask is unavailable right now.'
-        this.answerActive = true
+        this.enterAnswer()
       } finally {
         this.resolving = false
       }
@@ -234,6 +313,7 @@ export const useCatalogueStore = defineStore('catalogue', {
     },
 
     clearThread() {
+      if (this.answerActive) this.sort = this.browseSort
       this.answerActive = false; this.resultIds = []; this.line = ''; this.sub = ''; this.thread = []; this.askError = null
     },
   },

@@ -6,7 +6,7 @@ import type { Title } from '@/types'
 const title: Title = {
   id: 7, imdbId: 'tt7', title: 'Frieren', year: 2023, services: ['crunchyroll'],
   type: 'series', genres: ['Animation'], score: 9.0, anilistScore: null, len: '28 eps',
-  watched: false, rating: null,
+  watched: false, rating: null, newSince: null,
 }
 
 describe('PosterCard', () => {

@@ -27,6 +27,12 @@ pub fn plex_web_url(base: &str, machine_id: &str, rating_key: &str) -> String {
     )
 }
 
+/// A failed lookup still answers 404 (read-only path), but leave a trace so a
+/// transient DB error is distinguishable from a genuinely missing link.
+fn log_db_err(what: &str, e: &impl std::fmt::Display) {
+    tracing::warn!("watch redirect: {what} lookup failed: {e}");
+}
+
 /// Defense-in-depth: a MOTN link comes from an external feed, so only redirect
 /// to `https://` on the service's own domain (prevents an open-redirect pivot).
 #[must_use]
@@ -66,11 +72,13 @@ pub async fn redirect(
             .bind(id)
             .fetch_optional(pool.get_ref())
             .await
+            .map_err(|e| log_db_err("plex_rating_key", &e))
             .ok()
             .flatten()
             .flatten();
             let machine_id = crate::db::app_meta::get(pool.get_ref(), "plex_machine_id")
                 .await
+                .map_err(|e| log_db_err("plex_machine_id", &e))
                 .ok()
                 .flatten();
             match (rating_key, machine_id, cfg.plex_web_url.as_ref()) {
@@ -86,6 +94,7 @@ pub async fn redirect(
             .bind(service.as_str())
             .fetch_optional(pool.get_ref())
             .await
+            .map_err(|e| log_db_err("watch link", &e))
             .ok()
             .flatten()
             .flatten();
@@ -226,6 +235,76 @@ mod tests {
         )
         .await;
         assert_eq!(r400.status(), 400);
+    }
+
+    #[actix_web::test]
+    async fn stored_non_allowlisted_link_is_404() {
+        let (p, _dir) = pool().await;
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO titles (title, year, type) VALUES ('C', 2021, 'movie') RETURNING id",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO title_services (title_id, service, link) VALUES (?, 'disney', 'https://evil.example/disneyplus.com')")
+            .bind(id)
+            .execute(&p)
+            .await
+            .unwrap();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(p))
+                .app_data(web::Data::new(WatchConfig { plex_web_url: None }))
+                .configure(routes::configure),
+        )
+        .await;
+        let resp = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri(&format!("/api/titles/{id}/watch/disney"))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(resp.status(), 404);
+    }
+
+    #[allow(clippy::future_not_send)] // actix test service is !Send; single-threaded test runtime.
+    async fn plex_title_detail(plex_web_url: Option<&str>) -> serde_json::Value {
+        let (p, _dir) = pool().await;
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO titles (title, year, type, plex_rating_key) VALUES ('P', 2020, 'movie', '7') RETURNING id",
+        )
+        .fetch_one(&p)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO title_services (title_id, service) VALUES (?, 'plex')")
+            .bind(id)
+            .execute(&p)
+            .await
+            .unwrap();
+        app_meta::set(&p, "plex_machine_id", "MID").await.unwrap();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(p))
+                .app_data(web::Data::new(WatchConfig {
+                    plex_web_url: plex_web_url.map(String::from),
+                }))
+                .configure(routes::configure),
+        )
+        .await;
+        let req = test::TestRequest::get()
+            .uri(&format!("/api/titles/{id}"))
+            .to_request();
+        test::call_and_read_body_json(&app, req).await
+    }
+
+    #[actix_web::test]
+    async fn plex_is_watchable_only_with_a_plex_web_url() {
+        let with = plex_title_detail(Some("http://lan:32400")).await;
+        assert_eq!(with["watchable"], serde_json::json!(["plex"]));
+        // Without PLEX_WEB_URL the redirect would 404, so don't offer the button.
+        let without = plex_title_detail(None).await;
+        assert_eq!(without["watchable"], serde_json::json!([]));
     }
 }
 

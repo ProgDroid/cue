@@ -152,7 +152,9 @@ live but still working acceptably:
   BOM on the first header, CRLF line endings, and the full 14-column header.
   The automated suite proves the contract + persistence; only a real export
   exercises these CSV quirks.
-  Non-blocking polish noted at merge: ~~result line has no singular/plural
+  Non-blocking polish noted at merge (✅ all four code items below DONE 2026-10-03,
+  `89601ed`: indexed `matched`, production route table in tests, `invalid_utf8`
+  test, calendar-aware date check): ~~result line has no singular/plural
   handling ("1 rows skipped")~~ (fixed 2026-06-23, see Polish section);
   `matched` scans the full `titles` table
   (fine at ~5k, scales with catalogue not import); endpoint test harness
@@ -297,20 +299,20 @@ hardening pass — backend tests 129 passing, clippy `-D warnings` clean.)
 Whole-branch review verdict was **Ready to merge** (no Critical/Major). These are
 non-blocking follow-ups surfaced during the review:
 
-- **Route-level test for the non-allowlisted-link → 404 path** (`watch::redirect`):
+- ✅ **DONE 2026-10-03 (`c6fb27b`).** **Route-level test for the non-allowlisted-link → 404 path** (`watch::redirect`):
   the `is_allowed_motn_link` predicate is unit-tested (http/wrong-host/Plex), but
   no integration test seeds a stored-but-non-allowlisted link and asserts the
   `tracing::warn` arm returns 404. The most security-adjacent of the deferred gaps.
-- **Log the swallowed DB error in `watch::redirect`:** the `plex_rating_key`/`link`
+- ✅ **DONE 2026-10-03 (`c6fb27b`).** **Log the swallowed DB error in `watch::redirect`:** the `plex_rating_key`/`link`
   lookups use `.ok()`, turning a transient DB error into a silent 404 with no log
   line. Add a `tracing::warn` on the `Err` arm for debuggability (read-only path,
   not a correctness/security issue).
-- **`watchable` vs `plex_web_url` residual edge:** `watchable` gates Plex on
+- ✅ **DONE 2026-10-03 (`c6fb27b`) — title detail drops `plex` from `watchable` without `PLEX_WEB_URL`.** **`watchable` vs `plex_web_url` residual edge:** `watchable` gates Plex on
   `plex_rating_key + machine_id` but not `plex_web_url`. Removing `PLEX_URL`/
   `PLEX_WEB_URL` after a successful Plex sync would render a "Watch on Plex" button
   whose redirect 404s. Pathological config change (can't sync Plex without
   `PLEX_URL`); document or add the guard if it ever bites.
-- **Minor test/cosmetic niceties:** rename `run_sync_persists_server_meta_non_fatally`
+- ✅ **DONE 2026-10-03 (`c6fb27b`), except the `color-mix` note (accepted).** **Minor test/cosmetic niceties:** rename `run_sync_persists_server_meta_non_fatally`
   → `…_persists_server_meta` (the Err test is the real non-fatal guard); add an
   exclusion assertion to the `watchable` test; `color-mix` in WatchLinks.vue needs
   Baseline-2023 browsers (acceptable for self-hosted).
@@ -327,13 +329,13 @@ whole-branch review: READY TO MERGE, no Critical/Major. Deferred items:
   during a full scroll-through, and scroll smoothness here. Only if still
   inadequate do we revisit server-side pagination (which would then also need a
   "hydrate titles by ids" endpoint so Ask results can render).
-- **M3 (Minor): AppHeader debounce timer not cleared on unmount.** A pending
+- ✅ **DONE 2026-10-03 — `debounce` gained `cancel()`, called on unmount.** **M3 (Minor): AppHeader debounce timer not cleared on unmount.** A pending
   `setTimeout` can fire `store.setQuery` after unmount. Harmless today (the
   header is a persistent shell component and the Pinia store outlives it); add an
   `onUnmounted` clear for tidiness if the file is touched.
-- **M1 (Minor): `firstWindow` naming in `computeWindow.ts`** — holds a count but
+- ✅ **DONE 2026-10-03 — renamed `firstWindowEnd`.** **M1 (Minor): `firstWindow` naming in `computeWindow.ts`** — holds a count but
   is assigned to `endIndex`; rename to `firstWindowEnd`/`windowSize` opportunistically.
-- **M2 (Minor): `useDelayedFlag` getter-arg path has no dedicated unit test** —
+- ✅ **DONE 2026-10-03 — direct getter test added.** **M2 (Minor): `useDelayedFlag` getter-arg path has no dedicated unit test** —
   covered transitively via BrowseView; add a direct case opportunistically.
 - **Pre-existing (not a regression): one-frame `--cols:1` cold flash** before the
   first width measurement. Deferred previously; unchanged by this branch.
@@ -354,3 +356,70 @@ whole-branch review: READY TO MERGE, no Critical/Major. Deferred items:
   selects** — the Genre, Sort, and Rating `<select>`s in `FilterBar.vue` now
   have `aria-label`s (`Filter by genre` / `Sort by` / `Filter by minimum
   rating`), covered by a FilterBar test.
+
+## Sort orders (2026-10-03)
+
+Homelab items that gate tuning and Phase 2 (need the live DB / a real MOTN key):
+
+- **(a) Measure the real cosine spread** (raw and centred) on the live DB, then
+  tune `FOR_YOU_K` / `FOR_YOU_LAMBDA` and the `MAX_POSITIVES` / `MAX_NEGATIVES`
+  caps accordingly.
+- **(b) Time a For you recompute after a rating.** Fallback if too slow:
+  per-title top-50 neighbour lists.
+- **(c) After ~2 weeks, read `requestsThisMonth`** (Settings MOTN line) to clear
+  the Phase 2 popularity gate.
+- **(d) Run the spec §10 `expiring` curl** to clear the Leaving soon gate.
+
+### Deferred minors (sort orders Phase 1)
+
+Carried from the Phase 1 task reviews and the final review. They are not fixed by
+the final fix wave, and none of them blocks the merge. One line each.
+
+**Backend: catalogue / `newSince`**
+- `fetch_title` loads every `added_at` per detail request (O(n); fine at ~5k).
+- `unix_now()` falls back to 0 on a pre-epoch clock.
+- No unsorted-input test for `new_since_map`.
+
+**Backend: For you scoring / service**
+- One NaN/inf vector makes the centroid non-finite → whole `VectorSet` empty; filter non-finite input before the mean.
+- A raw all-zero embedding is not dropped before centring (survives as `-mean`); zero-norm test uses an absolute `EPSILON`.
+- Tuning: with centred vectors `neg` can be negative (all negatives dissimilar) → acts as a bonus; consider clamping at 0 (see item (a)).
+- `VectorSet` build clones vectors (2× peak memory); per-candidate `Vec` allocation in `candidate_score` (see item (b)).
+- Top-k / negative cosine ties are resolved by unstable selection, not by id.
+- No tests for negative recency tie-break, empty build input, mode-length tie.
+- Single mutex: cache hits queue behind an in-flight recompute.
+- Result key misses a same-second count+sum-preserving rating swap; vector key misses an embedding re-upserted in place (same count/max id) until a titles/sync change.
+- No tests for rebuild via titles-count/sync_run change or the handler 500 path; the 500 has an empty body (other routes use JSON `{"error"}`).
+- Production `AtomicUsize` counters are only read by tests.
+
+**Backend: similar strip**
+- `/api/ask/similar` (every detail view) runs `embeddings::load_all` (~5k × 1536) and a full cosine scan on an actix worker; share `ForYouService`'s cached vectors or move the scan into `spawn_blocking`.
+
+**Backend: MOTN sync**
+- Cached-catalogs fallback is tested only for HTTP 500, not for unparseable / none-listed with a cache present.
+- No test pins "429 on `/countries` never falls back to the cached catalogs".
+- `/changes` requests are not asserted against `requests_this_month`.
+- `unparseable_countries` test asserts only `is_err()`, not the cause / that nothing was cached.
+- The fallback doesn't refresh `checked_at`, so `/countries` is retried on every delta while it keeps failing (~1 req/day).
+- A future-dated `SEED_FAILED_AT` / `checked_at` (clock stepped back) stretches the windows.
+- `motn_meta::now_unix()` duplicates `catalogue::unix_now`.
+- Observation (pre-existing): a seed whose `/countries` lists only one of disney/crunchyroll returns Ok with one service, and `run_sync` reconciles the other to empty because `services()` returns both.
+
+**Backend: sync status**
+- The state test inserts a `motn_catalog_cache` row via raw SQL (schema-coupled).
+- `has_source` is covered only via route tests.
+
+**Frontend: API / types tests**
+- `forYou.test.ts`: one test asserts two cases with a mid-test re-stub; `toHaveBeenCalledWith` pins exact fetch args; `client.test.ts:70` regex looser than its siblings.
+
+**Frontend: catalogue store**
+- Older store test files don't mock `@/api/forYou` (the real fetch fails and is swallowed); add a global `vi.mock` in setup.
+- "refine keeps an explicitly chosen sort" can't tell the refine success branch from the error branch.
+- No test for equal non-null `newSince` falling through to rating/id; `byTrending` recomputes `externalRating` per comparison; module-level `forYouSeq` is shared across Pinia instances.
+
+**Frontend: FilterBar**
+- Retry button has no explicit `:focus-visible` style; the hint/error line has no `aria-live` region.
+- No test for the unlock hint in answer mode with basis < 3 (the in-flight/no-hint case is now covered).
+
+**Frontend: Settings**
+- No tests for `lastMode` null omission or the exact back-off boundary; `SEED_BACKOFF_SECS` is duplicated client-side; test wrappers are not unmounted; docs say "spec §10" without a path.

@@ -18,7 +18,7 @@ afterEach(() => { vi.useRealTimers() })
 function makeRouter() { return createRouter({ history: createMemoryHistory(), routes }) }
 
 function t(id: number, title: string): Title {
-  return { id, title, services: ['plex'], type: 'movie', genres: [], score: null, anilistScore: null, year: 2000, len: '', watched: false, rating: null, imdbId: null }
+  return { id, title, services: ['plex'], type: 'movie', genres: [], score: null, anilistScore: null, year: 2000, len: '', watched: false, rating: null, newSince: null, imdbId: null }
 }
 
 describe('BrowseView', () => {
