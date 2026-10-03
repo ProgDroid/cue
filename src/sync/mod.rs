@@ -629,7 +629,7 @@ mod orchestrator_tests {
     }
 
     #[tokio::test]
-    async fn run_sync_persists_server_meta_non_fatally() {
+    async fn run_sync_persists_server_meta() {
         let (p, _dir) = pool().await;
         // A source that returns a server_meta pair (simulates Plex machineIdentifier).
         let src = Arc::new(MetaFake {

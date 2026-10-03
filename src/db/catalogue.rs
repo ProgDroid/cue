@@ -207,6 +207,13 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        // Disney membership with no link: not resolvable, must be excluded.
+        sqlx::query(
+            "INSERT OR REPLACE INTO title_services (title_id, service, link) VALUES (1, 'disney', NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         // Write the machine id so Plex is considered resolvable.
         crate::db::app_meta::set(&pool, "plex_machine_id", "MID")
             .await
@@ -221,6 +228,11 @@ mod tests {
         assert!(
             dto.watchable.contains(&"crunchyroll".to_string()),
             "watchable should include crunchyroll; got {:?}",
+            dto.watchable
+        );
+        assert!(
+            !dto.watchable.contains(&"disney".to_string()),
+            "a membership without a link must not be watchable; got {:?}",
             dto.watchable
         );
     }

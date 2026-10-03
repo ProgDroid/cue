@@ -2,6 +2,7 @@ use actix_web::{web, HttpResponse, Responder};
 use sqlx::SqlitePool;
 
 use crate::db::catalogue::{fetch_catalogue, fetch_title};
+use crate::routes::watch::WatchConfig;
 
 pub async fn get_catalogue(pool: web::Data<SqlitePool>) -> impl Responder {
     match fetch_catalogue(pool.get_ref()).await {
@@ -13,10 +14,20 @@ pub async fn get_catalogue(pool: web::Data<SqlitePool>) -> impl Responder {
     }
 }
 
-pub async fn get_title(pool: web::Data<SqlitePool>, path: web::Path<i64>) -> impl Responder {
+pub async fn get_title(
+    pool: web::Data<SqlitePool>,
+    path: web::Path<i64>,
+    watch_cfg: Option<web::Data<WatchConfig>>,
+) -> impl Responder {
     let id = path.into_inner();
     match fetch_title(pool.get_ref(), id).await {
-        Ok(Some(dto)) => HttpResponse::Ok().json(dto),
+        Ok(Some(mut dto)) => {
+            // The Plex redirect needs PLEX_WEB_URL; without it the button would 404.
+            if watch_cfg.and_then(|c| c.plex_web_url.clone()).is_none() {
+                dto.watchable.retain(|s| s != "plex");
+            }
+            HttpResponse::Ok().json(dto)
+        }
         Ok(None) => HttpResponse::NotFound().finish(),
         Err(e) => {
             tracing::error!("title detail fetch failed: {e:#}");
