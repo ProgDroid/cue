@@ -356,3 +356,16 @@ whole-branch review: READY TO MERGE, no Critical/Major. Deferred items:
   selects** — the Genre, Sort, and Rating `<select>`s in `FilterBar.vue` now
   have `aria-label`s (`Filter by genre` / `Sort by` / `Filter by minimum
   rating`), covered by a FilterBar test.
+
+## Sort orders (2026-10-03)
+
+Homelab items that gate tuning and Phase 2 (need the live DB / a real MOTN key):
+
+- **(a) Measure the real cosine spread** (raw and centred) on the live DB, then
+  tune `FOR_YOU_K` / `FOR_YOU_LAMBDA` and the `MAX_POSITIVES` / `MAX_NEGATIVES`
+  caps accordingly.
+- **(b) Time a For you recompute after a rating.** Fallback if too slow:
+  per-title top-50 neighbour lists.
+- **(c) After ~2 weeks, read `requestsThisMonth`** (Settings MOTN line) to clear
+  the Phase 2 popularity gate.
+- **(d) Run the spec §10 `expiring` curl** to clear the Leaving soon gate.
