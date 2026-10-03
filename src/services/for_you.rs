@@ -2,9 +2,15 @@
 //! top-k scoring against the user's ratings. Pure: no I/O, no async.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use serde::Serialize;
+use sqlx::SqlitePool;
+use tokio::sync::Mutex;
 
+use crate::db::embeddings;
+use crate::services::embeddings::EMBED_MODEL;
 use crate::services::similarity::{centroid, dot};
 
 /// Number of nearest positives averaged into `pos(c)`.
@@ -193,6 +199,149 @@ pub fn rank(set: &VectorSet, ratings: &[Rated], excluded: &HashSet<i64>) -> ForY
         ids: scored.into_iter().map(|(id, _)| id).collect(),
         basis: sel.positive_count,
     }
+}
+
+/// Cache key for the vector set: changes whenever embeddings, titles or syncs do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VectorKey {
+    embeddings: i64,
+    max_embedded_id: i64,
+    titles: i64,
+    last_sync_id: i64,
+}
+
+/// Cache key for a ranked result: the vector key plus the user's rating and watch state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResultKey {
+    vectors: VectorKey,
+    ratings: i64,
+    rating_sum: i64,
+    last_rated_at: String,
+    watched: i64,
+}
+
+#[derive(Default)]
+struct Cache {
+    vectors: Option<(VectorKey, Arc<VectorSet>)>,
+    result: Option<(ResultKey, ForYouResult)>,
+}
+
+/// Computes and caches "For you" rankings. Cheap cache-key queries run on every
+/// call; embeddings are reloaded only when the vector key changes and the ranking
+/// is recomputed only when the result key changes.
+#[derive(Default)]
+pub struct ForYouService {
+    cache: Mutex<Cache>,
+    computations: AtomicUsize,
+    vector_builds: AtomicUsize,
+}
+
+impl ForYouService {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Number of times a ranking was computed (test hook).
+    #[cfg(test)]
+    pub fn computations(&self) -> usize {
+        self.computations.load(Ordering::Relaxed)
+    }
+
+    /// Number of times the vector set was rebuilt (test hook).
+    #[cfg(test)]
+    pub fn vector_builds(&self) -> usize {
+        self.vector_builds.load(Ordering::Relaxed)
+    }
+
+    /// The ranked recommendations for the current catalogue and user data.
+    ///
+    /// # Errors
+    /// Returns an error if a query fails or a background task panics.
+    pub async fn get(&self, pool: &SqlitePool) -> anyhow::Result<ForYouResult> {
+        // One lock for the whole call: concurrent requests share a single computation.
+        let mut cache = self.cache.lock().await;
+        let key = result_key(pool).await?;
+
+        if let Some((k, r)) = &cache.result {
+            if *k == key {
+                return Ok(r.clone());
+            }
+        }
+
+        let set = match &cache.vectors {
+            Some((k, set)) if *k == key.vectors => Arc::clone(set),
+            _ => {
+                let raw = embeddings::load_all(pool, EMBED_MODEL).await?;
+                let set =
+                    Arc::new(tokio::task::spawn_blocking(move || VectorSet::build(raw)).await?);
+                self.vector_builds.fetch_add(1, Ordering::Relaxed);
+                cache.vectors = Some((key.vectors.clone(), Arc::clone(&set)));
+                set
+            }
+        };
+
+        let (ratings, excluded) = load_user_state(pool).await?;
+        let result = tokio::task::spawn_blocking(move || rank(&set, &ratings, &excluded)).await?;
+        self.computations.fetch_add(1, Ordering::Relaxed);
+        cache.result = Some((key, result.clone()));
+        Ok(result)
+    }
+}
+
+async fn result_key(pool: &SqlitePool) -> anyhow::Result<ResultKey> {
+    let row: (i64, i64, i64, i64, i64, i64, String, i64) = sqlx::query_as(
+        "SELECT
+            (SELECT COUNT(*) FROM title_embeddings WHERE model = ?1),
+            (SELECT COALESCE(MAX(title_id), 0) FROM title_embeddings WHERE model = ?1),
+            (SELECT COUNT(*) FROM titles),
+            (SELECT COALESCE(MAX(id), 0) FROM sync_runs),
+            (SELECT COUNT(*) FROM user_ratings),
+            (SELECT COALESCE(SUM(rating), 0) FROM user_ratings),
+            (SELECT COALESCE(MAX(rated_at), '') FROM user_ratings),
+            (SELECT COUNT(*) FROM watch_history)",
+    )
+    .bind(EMBED_MODEL)
+    .fetch_one(pool)
+    .await?;
+    Ok(ResultKey {
+        vectors: VectorKey {
+            embeddings: row.0,
+            max_embedded_id: row.1,
+            titles: row.2,
+            last_sync_id: row.3,
+        },
+        ratings: row.4,
+        rating_sum: row.5,
+        last_rated_at: row.6,
+        watched: row.7,
+    })
+}
+
+/// Ratings of catalogue titles, and the ids to exclude (rated or watched titles).
+async fn load_user_state(pool: &SqlitePool) -> anyhow::Result<(Vec<Rated>, HashSet<i64>)> {
+    let rows: Vec<(i64, i64, String)> = sqlx::query_as(
+        "SELECT t.id, r.rating, r.rated_at
+         FROM user_ratings r JOIN titles t ON t.imdb_id = r.imdb_id",
+    )
+    .fetch_all(pool)
+    .await?;
+    let watched: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM titles WHERE imdb_id IN (SELECT imdb_id FROM watch_history)",
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut excluded: HashSet<i64> = watched.into_iter().collect();
+    excluded.extend(rows.iter().map(|(id, _, _)| *id));
+    let ratings = rows
+        .into_iter()
+        .map(|(title_id, rating, rated_at)| Rated {
+            title_id,
+            rating,
+            rated_at,
+        })
+        .collect();
+    Ok((ratings, excluded))
 }
 
 #[cfg(test)]
@@ -435,5 +584,90 @@ mod tests {
         let sel = select_basis(&set, &ratings);
         assert_eq!(sel.positives, vec![(2, 1.0), (1, 0.25)]);
         assert_eq!(sel.negatives, vec![(4, 1.0), (3, 0.25)]);
+    }
+}
+
+#[cfg(test)]
+mod service_tests {
+    use super::*;
+    use crate::db::{embeddings, init_pool, user_data};
+    use crate::services::embeddings::EMBED_MODEL;
+    use sqlx::SqlitePool;
+
+    async fn fresh_pool() -> (SqlitePool, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("test.db");
+        let url = format!("sqlite:{}", db.to_string_lossy().replace('\\', "/"));
+        (init_pool(&url).await.unwrap(), dir)
+    }
+
+    /// Insert a title with an embedding; returns its id.
+    async fn seed(pool: &SqlitePool, imdb: &str, vector: &[f32]) -> i64 {
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO titles (imdb_id, title, year, type) VALUES (?, 'T', 2020, 'movie') RETURNING id",
+        )
+        .bind(imdb)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        embeddings::upsert(pool, id, vector, EMBED_MODEL)
+            .await
+            .unwrap();
+        id
+    }
+
+    /// Three liked titles, two candidates (closer first).
+    async fn seed_catalogue(pool: &SqlitePool) {
+        for (imdb, v) in [
+            ("tt1", [1.0, 0.0, 0.0]),
+            ("tt2", [0.9, 0.1, 0.0]),
+            ("tt3", [0.9, -0.1, 0.0]),
+            ("tt4", [0.8, 0.05, 0.0]),
+            ("tt5", [0.0, 1.0, 0.0]),
+        ] {
+            seed(pool, imdb, &v).await;
+        }
+        for imdb in ["tt1", "tt2", "tt3"] {
+            user_data::set_rating(pool, imdb, 9).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn result_cache_hits_until_a_rating_changes() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_catalogue(&pool).await;
+        let svc = ForYouService::new();
+        let first = svc.get(&pool).await.unwrap();
+        let second = svc.get(&pool).await.unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.basis, 3);
+        assert_eq!(svc.computations(), 1);
+
+        user_data::set_rating(&pool, "tt1", 8).await.unwrap();
+        svc.get(&pool).await.unwrap();
+        assert_eq!(svc.computations(), 2);
+        // A rating change never rebuilds the vector set.
+        assert_eq!(svc.vector_builds(), 1);
+
+        // Watching a title also invalidates the result.
+        user_data::set_watched(&pool, "tt4", true).await.unwrap();
+        let after_watch = svc.get(&pool).await.unwrap();
+        assert_eq!(svc.computations(), 3);
+        assert_eq!(after_watch.ids.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn vector_cache_rebuilds_after_new_embeddings() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_catalogue(&pool).await;
+        let svc = ForYouService::new();
+        svc.get(&pool).await.unwrap();
+        svc.get(&pool).await.unwrap();
+        assert_eq!(svc.vector_builds(), 1);
+
+        seed(&pool, "tt6", &[0.5, 0.5, 0.0]).await;
+        let r = svc.get(&pool).await.unwrap();
+        assert_eq!(svc.vector_builds(), 2);
+        assert_eq!(r.ids.len(), 3);
     }
 }
