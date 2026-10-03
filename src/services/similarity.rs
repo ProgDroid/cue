@@ -1,9 +1,26 @@
 //! Pure vector math for retrieval and the refine chips. No I/O, no async.
 
+/// Width of the fixed chunks in [`dot`]; 8 `f32` lanes fill a 256-bit register.
+const DOT_LANES: usize = 8;
+
 /// Dot product of two equal-length vectors. Shorter length wins if they differ.
+///
+/// Walks fixed-width chunks with independent accumulators so the compiler can
+/// vectorise it; results match a naive sum up to float rounding.
 #[must_use]
 pub fn dot(a: &[f32], b: &[f32]) -> f32 {
-    a.iter().zip(b).map(|(x, y)| x * y).sum()
+    let n = a.len().min(b.len());
+    let (a, b) = (&a[..n], &b[..n]);
+    let (chunks_a, chunks_b) = (a.chunks_exact(DOT_LANES), b.chunks_exact(DOT_LANES));
+    let (rest_a, rest_b) = (chunks_a.remainder(), chunks_b.remainder());
+    let mut acc = [0.0_f32; DOT_LANES];
+    for (ca, cb) in chunks_a.zip(chunks_b) {
+        for ((lane, x), y) in acc.iter_mut().zip(ca).zip(cb) {
+            *lane += x * y;
+        }
+    }
+    let tail: f32 = rest_a.iter().zip(rest_b).map(|(x, y)| x * y).sum();
+    acc.iter().sum::<f32>() + tail
 }
 
 /// Cosine similarity in [-1, 1]; 0.0 if either vector has zero magnitude.
@@ -58,6 +75,26 @@ pub fn rank_by_cosine(query: &[f32], items: &[(i64, Vec<f32>)], top_n: usize) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chunked_dot_matches_naive() {
+        let a: Vec<f32> = (0..1_539_i16)
+            .map(|i| f32::from(i * 7 % 13) - 6.0)
+            .collect();
+        let b: Vec<f32> = (0..1_539_i16)
+            .map(|i| f32::from(i * 5 % 11) - 5.0)
+            .collect();
+        let naive: f32 = a.iter().zip(&b).map(|(x, y)| x * y).sum();
+        assert!((dot(&a, &b) - naive).abs() < 1e-2 * naive.abs().max(1.0));
+    }
+
+    #[test]
+    fn dot_shorter_length_wins() {
+        let a = vec![1.0_f32; 20];
+        let b = vec![2.0_f32; 11];
+        assert!((dot(&a, &b) - 22.0).abs() < 1e-6);
+        assert!((dot(&b, &a) - 22.0).abs() < 1e-6);
+    }
 
     #[test]
     fn cosine_of_identical_vectors_is_one() {
