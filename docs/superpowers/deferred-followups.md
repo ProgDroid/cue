@@ -369,3 +369,57 @@ Homelab items that gate tuning and Phase 2 (need the live DB / a real MOTN key):
 - **(c) After ~2 weeks, read `requestsThisMonth`** (Settings MOTN line) to clear
   the Phase 2 popularity gate.
 - **(d) Run the spec §10 `expiring` curl** to clear the Leaving soon gate.
+
+### Deferred minors (sort orders Phase 1)
+
+Carried from the Phase 1 task reviews and the final review. They are not fixed by
+the final fix wave, and none of them blocks the merge. One line each.
+
+**Backend: catalogue / `newSince`**
+- `fetch_title` loads every `added_at` per detail request (O(n); fine at ~5k).
+- `unix_now()` falls back to 0 on a pre-epoch clock.
+- No unsorted-input test for `new_since_map`.
+
+**Backend: For you scoring / service**
+- One NaN/inf vector makes the centroid non-finite → whole `VectorSet` empty; filter non-finite input before the mean.
+- A raw all-zero embedding is not dropped before centring (survives as `-mean`); zero-norm test uses an absolute `EPSILON`.
+- Tuning: with centred vectors `neg` can be negative (all negatives dissimilar) → acts as a bonus; consider clamping at 0 (see item (a)).
+- `VectorSet` build clones vectors (2× peak memory); per-candidate `Vec` allocation in `candidate_score` (see item (b)).
+- Top-k / negative cosine ties are resolved by unstable selection, not by id.
+- No tests for negative recency tie-break, empty build input, mode-length tie.
+- Single mutex: cache hits queue behind an in-flight recompute.
+- Result key misses a same-second count+sum-preserving rating swap; vector key misses an embedding re-upserted in place (same count/max id) until a titles/sync change.
+- No tests for rebuild via titles-count/sync_run change or the handler 500 path; the 500 has an empty body (other routes use JSON `{"error"}`).
+- Production `AtomicUsize` counters are only read by tests.
+
+**Backend: similar strip**
+- `/api/ask/similar` (every detail view) runs `embeddings::load_all` (~5k × 1536) and a full cosine scan on an actix worker; share `ForYouService`'s cached vectors or move the scan into `spawn_blocking`.
+
+**Backend: MOTN sync**
+- Cached-catalogs fallback is tested only for HTTP 500, not for unparseable / none-listed with a cache present.
+- No test pins "429 on `/countries` never falls back to the cached catalogs".
+- `/changes` requests are not asserted against `requests_this_month`.
+- `unparseable_countries` test asserts only `is_err()`, not the cause / that nothing was cached.
+- The fallback doesn't refresh `checked_at`, so `/countries` is retried on every delta while it keeps failing (~1 req/day).
+- A future-dated `SEED_FAILED_AT` / `checked_at` (clock stepped back) stretches the windows.
+- `motn_meta::now_unix()` duplicates `catalogue::unix_now`.
+- Observation (pre-existing): a seed whose `/countries` lists only one of disney/crunchyroll returns Ok with one service, and `run_sync` reconciles the other to empty because `services()` returns both.
+
+**Backend: sync status**
+- The state test inserts a `motn_catalog_cache` row via raw SQL (schema-coupled).
+- `has_source` is covered only via route tests.
+
+**Frontend: API / types tests**
+- `forYou.test.ts`: one test asserts two cases with a mid-test re-stub; `toHaveBeenCalledWith` pins exact fetch args; `client.test.ts:70` regex looser than its siblings.
+
+**Frontend: catalogue store**
+- Older store test files don't mock `@/api/forYou` (the real fetch fails and is swallowed); add a global `vi.mock` in setup.
+- "refine keeps an explicitly chosen sort" can't tell the refine success branch from the error branch.
+- No test for equal non-null `newSince` falling through to rating/id; `byTrending` recomputes `externalRating` per comparison; module-level `forYouSeq` is shared across Pinia instances.
+
+**Frontend: FilterBar**
+- Retry button has no explicit `:focus-visible` style; the hint/error line has no `aria-live` region.
+- No test for the unlock hint in answer mode with basis < 3 (the in-flight/no-hint case is now covered).
+
+**Frontend: Settings**
+- No tests for `lastMode` null omission or the exact back-off boundary; `SEED_BACKOFF_SECS` is duplicated client-side; test wrappers are not unmounted; docs say "spec §10" without a path.
