@@ -218,6 +218,65 @@ describe('for you', () => {
     s.forYou = { status: 'ready', ids: [], basis: 3 }
     expect(s.forYouAvailable).toBe(true)
   })
+
+  it('availability and the unlock lock follow the known basis, not the load status', async () => {
+    const s = useCatalogueStore()
+    // idle / in flight: unavailable, but not "locked" (basis unknown)
+    expect(s.forYouAvailable).toBe(false)
+    expect(s.forYouLocked).toBe(false)
+    const d = deferred<ForYouResult>()
+    vi.mocked(getForYou).mockReturnValueOnce(d.promise)
+    const p = s.loadForYou()
+    expect(s.forYou.status).toBe('loading')
+    expect(s.forYouAvailable).toBe(false)
+    expect(s.forYouLocked).toBe(false)
+    // failed first fetch: unavailable, not locked
+    d.reject(new Error('down'))
+    await p
+    expect(s.forYou.status).toBe('error')
+    expect(s.forYouAvailable).toBe(false)
+    expect(s.forYouLocked).toBe(false)
+    // ready below the threshold: locked
+    vi.mocked(getForYou).mockResolvedValueOnce({ ids: [], basis: 2 })
+    await s.loadForYou()
+    expect(s.forYouAvailable).toBe(false)
+    expect(s.forYouLocked).toBe(true)
+    // ready at the threshold, then a failed reload keeps the last good basis
+    vi.mocked(getForYou).mockResolvedValueOnce({ ids: [1], basis: 3 })
+    await s.loadForYou()
+    expect(s.forYouAvailable).toBe(true)
+    vi.mocked(getForYou).mockRejectedValueOnce(new Error('down'))
+    await s.loadForYou()
+    expect(s.forYou.status).toBe('error')
+    expect(s.forYouAvailable).toBe(true)
+    expect(s.forYouLocked).toBe(false)
+  })
+
+  it('falls back to the browse sort when For you becomes unavailable', async () => {
+    const s = useCatalogueStore(); s.catalogue = cat(); ready(s, [1], 4)
+    s.browseSort = 'rating'
+    s.setSort('foryou')
+    vi.mocked(getForYou).mockResolvedValueOnce({ ids: [], basis: 2 })
+    await s.loadForYou()
+    expect(s.sort).toBe('rating')
+  })
+
+  it('falls back to trending when the browse sort is itself For you', async () => {
+    const s = useCatalogueStore(); s.catalogue = cat(); ready(s, [1], 4)
+    s.browseSort = 'foryou'
+    s.setSort('foryou')
+    vi.mocked(getForYou).mockResolvedValueOnce({ ids: [], basis: 1 })
+    await s.loadForYou()
+    expect(s.sort).toBe('trending')
+  })
+
+  it('keeps another sort untouched when For you becomes unavailable', async () => {
+    const s = useCatalogueStore(); s.catalogue = cat(); ready(s, [1], 4)
+    s.setSort('az')
+    vi.mocked(getForYou).mockResolvedValueOnce({ ids: [], basis: 0 })
+    await s.loadForYou()
+    expect(s.sort).toBe('az')
+  })
 })
 
 describe('for-you refresh triggers', () => {

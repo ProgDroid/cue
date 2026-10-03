@@ -115,11 +115,11 @@ const resultCount = computed(() => `${store.visibleTitles.length} titles`)
       </select>
       <span class="select-arrow" aria-hidden="true">&#9660;</span>
     </div>
-    <span v-if="!store.forYouAvailable" data-test="foryou-hint" class="sort-note">
+    <span v-if="store.forYouLocked" data-test="foryou-hint" class="sort-note">
       Rate 3+ titles you liked to unlock For you
     </span>
     <button
-      v-if="store.sort === 'foryou' && store.forYou.status === 'error'"
+      v-if="store.forYou.status === 'error'"
       type="button"
       data-test="foryou-error"
       class="sort-note sort-note-error"

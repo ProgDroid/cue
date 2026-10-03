@@ -81,16 +81,20 @@ const importError = ref('')
 const SEED_BACKOFF_SECS = 3 * 86_400
 
 const fmtNum = (n: number) => n.toLocaleString('en-GB')
-const fmtDate = (unixSecs: number) =>
-  new Date(unixSecs * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+// "12 Sep" (UTC). Fixed month names: ICU's en-GB short month varies by version ("Sep"/"Sept").
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const fmtDate = (unixSecs: number) => {
+  const d = new Date(unixSecs * 1000)
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`
+}
 
 // `motn` may be null (MOTN unconfigured) or undefined (older server) — both hide the line.
 const motnLine = computed(() => {
   const m = status.value?.motn
   if (m == null) return ''
   const parts = [`Cache ${fmtNum(m.cacheSize)} shows`]
-  if (m.lastMode) parts.push(`${m.lastMode} sync`)
   if (m.lastSeedAt != null) parts.push(`last full seed ${fmtDate(m.lastSeedAt)}`)
+  if (m.lastMode) parts.push(m.lastMode)
   if (m.seedFailedAt != null) {
     const resumeAt = m.seedFailedAt + SEED_BACKOFF_SECS
     if (resumeAt * 1000 > Date.now()) parts.push(`seed paused until ${fmtDate(resumeAt)}`)

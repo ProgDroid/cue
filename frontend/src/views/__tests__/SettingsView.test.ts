@@ -57,12 +57,16 @@ describe('SettingsView MOTN line', () => {
     const w = await mountView(motn)
     const line = w.find('[data-test="motn-line"]')
     expect(line.exists()).toBe(true)
-    const text = line.text()
-    expect(text).toContain('Cache 4,812 shows')
-    expect(text).toContain('last full seed 12 Sep')
-    expect(text).toContain('delta')
-    expect(text).toContain('37 / 500 requests this month (approx.)')
-    expect(text).not.toContain('seed paused')
+    expect(line.text()).toBe(
+      'Cache 4,812 shows · last full seed 12 Sep · delta · 37 / 500 requests this month (approx.)',
+    )
+  })
+
+  it('places "seed paused until …" after the mode', async () => {
+    const w = await mountView({ ...motn, lastMode: 'seed', seedFailedAt: NOW - 3600 })
+    expect(w.find('[data-test="motn-line"]').text()).toBe(
+      'Cache 4,812 shows · last full seed 12 Sep · seed · seed paused until 6 Oct · 37 / 500 requests this month (approx.)',
+    )
   })
 
   it('shows seed paused until … during back-off', async () => {

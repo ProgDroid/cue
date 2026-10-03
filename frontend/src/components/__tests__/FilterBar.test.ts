@@ -1,11 +1,17 @@
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import FilterBar from '../FilterBar.vue'
 import { useCatalogueStore } from '@/stores/catalogue'
 import type { Title } from '@/types'
 
-beforeEach(() => setActivePinia(createPinia()))
+vi.mock('@/api/forYou', () => ({ getForYou: vi.fn() }))
+import { getForYou } from '@/api/forYou'
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+  vi.clearAllMocks()
+})
 
 /** Minimal but fully-shaped Title stub — satisfies all store getters. */
 function t(id: number): Title {
@@ -83,13 +89,48 @@ describe('FilterBar', () => {
       expect((w.get('[data-test="sort-select"]').element as HTMLSelectElement).value).toBe('relevance')
     })
 
-    it('For you is disabled with the unlock hint below basis 3', () => {
+    const forYouOpt = (w: ReturnType<typeof mount>) =>
+      w.get('option[value="foryou"]').element as HTMLOptionElement
+
+    it('For you is disabled with the unlock hint when ready below basis 3', () => {
       const s = useCatalogueStore()
-      s.forYou = { status: 'idle', ids: [], basis: 2 }
+      s.forYou = { status: 'ready', ids: [], basis: 2 }
       const w = mount(FilterBar)
-      const opt = w.get('option[value="foryou"]').element as HTMLOptionElement
-      expect(opt.disabled).toBe(true)
+      expect(forYouOpt(w).disabled).toBe(true)
       expect(w.get('[data-test="foryou-hint"]').text()).toBe('Rate 3+ titles you liked to unlock For you')
+    })
+
+    it('while the first load is in flight For you is disabled with no hint', async () => {
+      const s = useCatalogueStore()
+      const w = mount(FilterBar)
+      expect(s.forYou.status).toBe('idle')
+      expect(forYouOpt(w).disabled).toBe(true)
+      expect(w.find('[data-test="foryou-hint"]').exists()).toBe(false)
+      vi.mocked(getForYou).mockReturnValue(new Promise(() => {}))
+      void s.loadForYou()
+      await flushPromises()
+      expect(s.forYou.status).toBe('loading')
+      expect(forYouOpt(w).disabled).toBe(true)
+      expect(w.find('[data-test="foryou-hint"]').exists()).toBe(false)
+      expect(w.find('[data-test="foryou-error"]').exists()).toBe(false)
+    })
+
+    it('a failed first fetch shows retry and no unlock hint, and retry recovers', async () => {
+      const s = useCatalogueStore()
+      vi.mocked(getForYou).mockRejectedValueOnce(new Error('down'))
+      await s.loadForYou()
+      const w = mount(FilterBar)
+      expect(s.sort).toBe('trending')
+      expect(w.find('[data-test="foryou-hint"]').exists()).toBe(false)
+      const err = w.get('[data-test="foryou-error"]')
+      expect(err.text()).toBe('For you unavailable — retry')
+      vi.mocked(getForYou).mockResolvedValueOnce({ ids: [], basis: 5 })
+      await err.trigger('click')
+      await flushPromises()
+      expect(s.forYou.status).toBe('ready')
+      expect(forYouOpt(w).disabled).toBe(false)
+      expect(w.find('[data-test="foryou-error"]').exists()).toBe(false)
+      expect(w.find('[data-test="foryou-hint"]').exists()).toBe(false)
     })
 
     it('For you is enabled and the hint hidden at basis 3', () => {
@@ -112,12 +153,12 @@ describe('FilterBar', () => {
       expect(spy).toHaveBeenCalledTimes(1)
     })
 
-    it('hides the error line when For you is not the selected sort', () => {
+    it('shows the error line even when For you is not the selected sort', () => {
       const s = useCatalogueStore()
       s.forYou = { status: 'error', ids: [], basis: 5 }
       s.sort = 'trending'
       const w = mount(FilterBar)
-      expect(w.find('[data-test="foryou-error"]').exists()).toBe(false)
+      expect(w.get('[data-test="foryou-error"]').text()).toBe('For you unavailable — retry')
     })
   })
 })

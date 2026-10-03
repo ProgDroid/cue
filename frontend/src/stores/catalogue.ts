@@ -95,7 +95,14 @@ export const useCatalogueStore = defineStore('catalogue', {
   }),
 
   getters: {
+    /**
+     * For you can be selected. `basis` is the last good (ready) basis: 0 until the
+     * first ready response, and kept across reloads and failed reloads.
+     */
     forYouAvailable: (state): boolean => state.forYou.basis >= FOR_YOU_MIN_BASIS,
+    /** A ready response says the basis is too small: show the unlock hint. */
+    forYouLocked: (state): boolean =>
+      state.forYou.status === 'ready' && state.forYou.basis < FOR_YOU_MIN_BASIS,
     isWatched: (state) => (id: number): boolean => !!state.watched[id],
     ratingOf: (state) => (id: number): number | null => state.ratings[id] ?? null,
     similar() {
@@ -233,6 +240,8 @@ export const useCatalogueStore = defineStore('catalogue', {
         const r = await getForYou()
         if (seq !== forYouSeq) return
         this.forYou = { status: 'ready', ids: r.ids, basis: r.basis }
+        if (this.sort === 'foryou' && r.basis < FOR_YOU_MIN_BASIS)
+          this.sort = this.browseSort === 'foryou' ? 'trending' : this.browseSort
       } catch {
         if (seq !== forYouSeq) return
         this.forYou.status = 'error' // keep the previous ids
