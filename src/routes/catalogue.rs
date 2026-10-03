@@ -86,17 +86,21 @@ mod tests {
 
         let req = test::TestRequest::get().uri("/api/titles/1").to_request();
         let body: Value = test::call_and_read_body_json(&app, req).await;
+        // The seed adds 28 recent rows (< 300), so none is a bulk insert and
+        // every title must report a real unix timestamp, not null.
         assert!(
-            body.get("newSince").is_some(),
-            "detail must carry newSince (null or unix secs)"
+            body["newSince"].is_i64(),
+            "detail newSince must be a unix timestamp; got {}",
+            body["newSince"]
         );
 
         let req = test::TestRequest::get().uri("/api/catalogue").to_request();
         let list: Value = test::call_and_read_body_json(&app, req).await;
         for item in list.as_array().unwrap() {
             assert!(
-                item.get("newSince").is_some(),
-                "list item must carry newSince"
+                item["newSince"].is_i64(),
+                "list item newSince must be a unix timestamp; got {}",
+                item["newSince"]
             );
         }
     }
